@@ -3,7 +3,7 @@ module platform-mihomo-service
 go 1.24.0
 
 require (
-	github.com/PaiGramTeam/proto-contracts v0.0.0
+	github.com/PaiGramTeam/proto-contracts v0.0.0-20260415161147-f0505e01b851
 	github.com/go-kratos/kratos/v2 v2.9.2
 	github.com/go-sql-driver/mysql v1.8.1
 	github.com/golang-jwt/jwt/v5 v5.3.1
@@ -14,8 +14,6 @@ require (
 	gorm.io/driver/mysql v1.6.0
 	gorm.io/gorm v1.31.1
 )
-
-replace github.com/PaiGramTeam/proto-contracts => ../proto-contracts
 
 require (
 	dario.cat/mergo v1.0.0 // indirect
