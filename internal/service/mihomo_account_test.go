@@ -1,0 +1,500 @@
+package service
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
+	v1 "platform-mihomo-service/api/mihomo/v1"
+	"platform-mihomo-service/internal/biz"
+	"platform-mihomo-service/internal/data"
+	platformmihomo "platform-mihomo-service/internal/platform/mihomo"
+	"platform-mihomo-service/internal/usecase"
+)
+
+func TestBindCredentialReturnsDiscoveredProfiles(t *testing.T) {
+	svc := newMihomoAccountServiceForTest(t)
+
+	bindResp, err := svc.BindCredential(context.Background(), &v1.BindCredentialRequest{
+		ServiceTicket:    signedServiceTicket(t),
+		CookieBundleJson: `{"account_id":"10001","cookie_token":"abc"}`,
+		Device: &v1.DeviceInfo{
+			DeviceId:   "12345678-1234-1234-1234-123456789abc",
+			DeviceFp:   "abcdefghijklmn",
+			DeviceName: "iPhone",
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "hoyo_ref_101_10001", bindResp.PlatformAccountId)
+	require.Len(t, bindResp.Profiles, 1)
+
+	upsertResp, err := svc.UpsertDevice(context.Background(), &v1.UpsertDeviceRequest{
+		ServiceTicket:     signedServiceTicketForAccount(t, bindResp.PlatformAccountId, "mihomo.device.update"),
+		PlatformAccountId: bindResp.PlatformAccountId,
+		Device:            &v1.DeviceInfo{DeviceId: "aaaaaaaa-1234-1234-1234-123456789abc", DeviceFp: "bbbbbbbbbbbbbb", DeviceName: "Android"},
+	})
+	require.NoError(t, err)
+	require.True(t, upsertResp.Success)
+
+	confirmResp, err := svc.ConfirmPrimaryProfile(context.Background(), &v1.ConfirmPrimaryProfileRequest{
+		ServiceTicket:     signedServiceTicketForAccount(t, bindResp.PlatformAccountId, "mihomo.profile.read"),
+		PlatformAccountId: bindResp.PlatformAccountId,
+		PlayerId:          "1008611",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, confirmResp.Profile)
+	require.Equal(t, "1008611", confirmResp.Profile.PlayerId)
+
+	statusResp, err := svc.GetCredentialStatus(context.Background(), &v1.GetCredentialStatusRequest{
+		ServiceTicket:     signedServiceTicketForAccount(t, bindResp.PlatformAccountId),
+		PlatformAccountId: bindResp.PlatformAccountId,
+	})
+	require.NoError(t, err)
+	require.Equal(t, v1.CredentialStatus_CREDENTIAL_STATUS_ACTIVE, statusResp.Status)
+	require.NotNil(t, statusResp.LastValidatedAt)
+
+	validateResp, err := svc.ValidateCredential(context.Background(), &v1.ValidateCredentialRequest{
+		ServiceTicket:     signedServiceTicketForAccount(t, bindResp.PlatformAccountId),
+		PlatformAccountId: bindResp.PlatformAccountId,
+	})
+	require.NoError(t, err)
+	require.Equal(t, v1.CredentialStatus_CREDENTIAL_STATUS_ACTIVE, validateResp.Status)
+	require.Empty(t, validateResp.ErrorCode)
+
+	refreshResp, err := svc.RefreshCredential(context.Background(), &v1.RefreshCredentialRequest{
+		ServiceTicket:     signedServiceTicketForAccount(t, bindResp.PlatformAccountId),
+		PlatformAccountId: bindResp.PlatformAccountId,
+	})
+	require.NoError(t, err)
+	require.Equal(t, v1.CredentialStatus_CREDENTIAL_STATUS_ACTIVE, refreshResp.Status)
+	require.NotNil(t, refreshResp.RefreshedAt)
+
+	profilesResp, err := svc.ListProfiles(context.Background(), &v1.ListProfilesRequest{
+		ServiceTicket:     signedServiceTicketForAccount(t, bindResp.PlatformAccountId),
+		PlatformAccountId: bindResp.PlatformAccountId,
+	})
+	require.NoError(t, err)
+	require.Len(t, profilesResp.Profiles, 1)
+	require.Equal(t, "1008611", profilesResp.Profiles[0].PlayerId)
+
+	primaryResp, err := svc.GetPrimaryProfile(context.Background(), &v1.GetPrimaryProfileRequest{
+		ServiceTicket:     signedServiceTicketForAccount(t, bindResp.PlatformAccountId),
+		PlatformAccountId: bindResp.PlatformAccountId,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, primaryResp.Profile)
+	require.Equal(t, "1008611", primaryResp.Profile.PlayerId)
+
+	authkeyResp, err := svc.GetAuthKey(context.Background(), &v1.GetAuthKeyRequest{
+		ServiceTicket:     signedServiceTicketForAccount(t, bindResp.PlatformAccountId),
+		PlatformAccountId: bindResp.PlatformAccountId,
+		PlayerId:          primaryResp.Profile.PlayerId,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "stub-authkey", authkeyResp.Authkey)
+	require.NotNil(t, authkeyResp.ExpiresAt)
+
+	summaryResp, err := svc.GetCredentialSummary(context.Background(), &v1.GetCredentialSummaryRequest{
+		ServiceTicket:     signedServiceTicketForAccount(t, bindResp.PlatformAccountId, "mihomo.credential.read_meta"),
+		PlatformAccountId: bindResp.PlatformAccountId,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, summaryResp.Summary)
+	require.Equal(t, bindResp.PlatformAccountId, summaryResp.Summary.PlatformAccountId)
+	require.Len(t, summaryResp.Summary.Devices, 2)
+	require.Len(t, summaryResp.Summary.Profiles, 1)
+}
+
+func TestUpdateCredentialReturnsUpdatedSummary(t *testing.T) {
+	svc := newMihomoAccountServiceForTest(t)
+	bindResp, err := svc.BindCredential(context.Background(), &v1.BindCredentialRequest{
+		ServiceTicket:    signedServiceTicket(t),
+		CookieBundleJson: `{"account_id":"10001","cookie_token":"abc"}`,
+		Device:           &v1.DeviceInfo{DeviceId: "device-1", DeviceFp: "fp-1", DeviceName: "iPhone"},
+	})
+	require.NoError(t, err)
+
+	updateResp, err := svc.UpdateCredential(context.Background(), &v1.UpdateCredentialRequest{
+		ServiceTicket:     signedServiceTicketForAccount(t, bindResp.PlatformAccountId, "mihomo.credential.update"),
+		PlatformAccountId: bindResp.PlatformAccountId,
+		CookieBundleJson:  `{"account_id":"10001","cookie_token":"updated"}`,
+		Device:            &v1.DeviceInfo{DeviceId: "device-2", DeviceFp: "fp-2", DeviceName: "iPad"},
+		RegionHint:        "cn_gf01",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, updateResp.Summary)
+	require.Equal(t, bindResp.PlatformAccountId, updateResp.Summary.PlatformAccountId)
+	require.Len(t, updateResp.Summary.Devices, 2)
+	require.Equal(t, "device-2", updateResp.Summary.Devices[1].DeviceId)
+}
+
+func TestDeleteCredentialRemovesCredential(t *testing.T) {
+	svc := newMihomoAccountServiceForTest(t)
+	bindResp, err := svc.BindCredential(context.Background(), &v1.BindCredentialRequest{
+		ServiceTicket:    signedServiceTicket(t),
+		CookieBundleJson: `{"account_id":"10001","cookie_token":"abc"}`,
+		Device:           &v1.DeviceInfo{DeviceId: "device-1", DeviceFp: "fp-1", DeviceName: "iPhone"},
+	})
+	require.NoError(t, err)
+
+	deleteResp, err := svc.DeleteCredential(context.Background(), &v1.DeleteCredentialRequest{
+		ServiceTicket:     signedServiceTicketForAccount(t, bindResp.PlatformAccountId, "mihomo.credential.delete"),
+		PlatformAccountId: bindResp.PlatformAccountId,
+	})
+	require.NoError(t, err)
+	require.True(t, deleteResp.Success)
+
+	_, err = svc.GetCredentialSummary(context.Background(), &v1.GetCredentialSummaryRequest{
+		ServiceTicket:     signedServiceTicketForAccount(t, bindResp.PlatformAccountId, "mihomo.credential.read_meta"),
+		PlatformAccountId: bindResp.PlatformAccountId,
+	})
+	require.Error(t, err)
+	require.Equal(t, codes.NotFound, status.Code(err))
+}
+
+func TestGetCredentialStatusRejectsOutOfScopePlatformAccountID(t *testing.T) {
+	svc := newMihomoAccountServiceForTest(t)
+	_, err := svc.GetCredentialStatus(context.Background(), &v1.GetCredentialStatusRequest{
+		ServiceTicket:     signedServiceTicketForAccount(t, "hoyo_ref_101_10001"),
+		PlatformAccountId: "hoyo_ref_999_10001",
+	})
+	require.Error(t, err)
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
+func TestConfirmPrimaryProfileRejectsUnknownPlayerID(t *testing.T) {
+	svc := newMihomoAccountServiceForTest(t)
+	bindResp, err := svc.BindCredential(context.Background(), &v1.BindCredentialRequest{
+		ServiceTicket:    signedServiceTicket(t),
+		CookieBundleJson: `{"account_id":"10001","cookie_token":"abc"}`,
+		Device:           &v1.DeviceInfo{DeviceId: "12345678-1234-1234-1234-123456789abc", DeviceFp: "abcdefghijklmn"},
+	})
+	require.NoError(t, err)
+
+	_, err = svc.ConfirmPrimaryProfile(context.Background(), &v1.ConfirmPrimaryProfileRequest{
+		ServiceTicket:     signedServiceTicketForAccount(t, bindResp.PlatformAccountId, "mihomo.profile.read"),
+		PlatformAccountId: bindResp.PlatformAccountId,
+		PlayerId:          "not-found",
+	})
+	require.Error(t, err)
+	require.Equal(t, codes.NotFound, status.Code(err))
+}
+
+func TestUpsertDeviceRejectsUnknownScopedAccount(t *testing.T) {
+	svc := newMihomoAccountServiceForTest(t)
+	_, err := svc.UpsertDevice(context.Background(), &v1.UpsertDeviceRequest{
+		ServiceTicket:     signedServiceTicketForAccount(t, "hoyo_ref_101_missing", "mihomo.device.update"),
+		PlatformAccountId: "hoyo_ref_101_missing",
+		Device:            &v1.DeviceInfo{DeviceId: "aaaaaaaa-1234-1234-1234-123456789abc", DeviceFp: "bbbbbbbbbbbbbb"},
+	})
+	require.Error(t, err)
+	require.Equal(t, codes.NotFound, status.Code(err))
+}
+
+func TestDeleteCredentialRejectsMissingScope(t *testing.T) {
+	svc := newMihomoAccountServiceForTest(t)
+	bindResp, err := svc.BindCredential(context.Background(), &v1.BindCredentialRequest{
+		ServiceTicket:    signedServiceTicket(t),
+		CookieBundleJson: `{"account_id":"10001","cookie_token":"abc"}`,
+		Device:           &v1.DeviceInfo{DeviceId: "device-1", DeviceFp: "fp-1", DeviceName: "iPhone"},
+	})
+	require.NoError(t, err)
+
+	_, err = svc.DeleteCredential(context.Background(), &v1.DeleteCredentialRequest{
+		ServiceTicket:     signedServiceTicketForAccount(t, bindResp.PlatformAccountId),
+		PlatformAccountId: bindResp.PlatformAccountId,
+	})
+	require.Error(t, err)
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
+func TestBindCredentialRejectsInvalidServiceTicket(t *testing.T) {
+	svc := newMihomoAccountServiceForTest(t)
+
+	_, err := svc.BindCredential(context.Background(), &v1.BindCredentialRequest{
+		ServiceTicket:    "invalid-ticket",
+		CookieBundleJson: `{"account_id":"10001","cookie_token":"abc"}`,
+		Device: &v1.DeviceInfo{
+			DeviceId: "12345678-1234-1234-1234-123456789abc",
+			DeviceFp: "abcdefghijklmn",
+		},
+	})
+	require.Error(t, err)
+	require.Equal(t, codes.Unauthenticated, status.Code(err))
+}
+
+const (
+	serviceTestAudience = "platform-mihomo-service"
+	serviceTestIssuer   = "paigram-account-center"
+)
+
+var serviceTestSigningKey = []byte("0123456789abcdef0123456789abcdef")
+
+func signedServiceTicket(t *testing.T) string { return signedServiceTicketForAccount(t, "") }
+
+func signedServiceTicketForAccount(t *testing.T, platformAccountID string, scopes ...string) string {
+	t.Helper()
+
+	claims := jwt.MapClaims{
+		"iss":                     serviceTestIssuer,
+		"aud":                     []string{serviceTestAudience},
+		"actor_type":              "bot",
+		"actor_id":                "bot-paigram",
+		"owner_user_id":           float64(1),
+		"bot_id":                  "bot-paigram",
+		"platform":                "mihomo",
+		"platform_service_key":    serviceTestAudience,
+		"platform_account_ref_id": float64(101),
+		"exp":                     time.Now().Add(time.Minute).Unix(),
+	}
+	if platformAccountID != "" {
+		claims["platform_account_id"] = platformAccountID
+	}
+	if len(scopes) > 0 {
+		claims["scopes"] = scopes
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+
+	signed, err := token.SignedString(serviceTestSigningKey)
+	require.NoError(t, err)
+
+	return signed
+}
+
+func newMihomoAccountServiceForTest(t *testing.T) *MihomoAccountService {
+	t.Helper()
+
+	credentialRepo := newMemoryCredentialRepo()
+	deviceRepo := newMemoryDeviceRepo()
+	profileRepo := newMemoryProfileRepo()
+	artifactRepo := newMemoryArtifactRepo()
+	client := platformmihomo.StubClient{}
+
+	bindUC := usecase.NewBindUsecase(credentialRepo, deviceRepo, profileRepo, client, serviceTestSigningKey)
+	statusUC := usecase.NewStatusUsecase(credentialRepo, client, serviceTestSigningKey)
+	profileUC := usecase.NewProfileUsecase(profileRepo)
+	authkeyUC := usecase.NewAuthkeyUsecase(credentialRepo, artifactRepo, client, serviceTestSigningKey)
+	managementUC := usecase.NewManagementUsecase(
+		credentialRepo,
+		deviceRepo,
+		profileRepo,
+		artifactRepo,
+		newMemoryManagementRepo(credentialRepo, deviceRepo, profileRepo, artifactRepo),
+		bindUC,
+		profileUC,
+	)
+
+	return NewMihomoAccountService(
+		data.NewTicketVerifier(serviceTestIssuer, serviceTestSigningKey),
+		bindUC,
+		statusUC,
+		profileUC,
+		authkeyUC,
+		managementUC,
+	)
+}
+
+type memoryManagementRepo struct {
+	credentialRepo *memoryCredentialRepo
+	deviceRepo     *memoryDeviceRepo
+	profileRepo    *memoryProfileRepo
+	artifactRepo   *memoryArtifactRepo
+}
+
+func newMemoryManagementRepo(
+	credentialRepo *memoryCredentialRepo,
+	deviceRepo *memoryDeviceRepo,
+	profileRepo *memoryProfileRepo,
+	artifactRepo *memoryArtifactRepo,
+) *memoryManagementRepo {
+	return &memoryManagementRepo{
+		credentialRepo: credentialRepo,
+		deviceRepo:     deviceRepo,
+		profileRepo:    profileRepo,
+		artifactRepo:   artifactRepo,
+	}
+}
+
+func (r *memoryManagementRepo) DeleteCredentialGraph(_ context.Context, platformAccountID string) error {
+	delete(r.credentialRepo.byPlatformAccountID, platformAccountID)
+	delete(r.deviceRepo.byPlatformAccountID, platformAccountID)
+	delete(r.profileRepo.byPlatformAccountID, platformAccountID)
+	for key, artifact := range r.artifactRepo.artifacts {
+		if artifact.PlatformAccountID == platformAccountID {
+			delete(r.artifactRepo.artifacts, key)
+		}
+	}
+	return nil
+}
+
+type memoryCredentialRepo struct {
+	byPlatformAccountID map[string]*biz.Credential
+}
+
+func newMemoryCredentialRepo() *memoryCredentialRepo {
+	return &memoryCredentialRepo{byPlatformAccountID: make(map[string]*biz.Credential)}
+}
+
+func (r *memoryCredentialRepo) Save(_ context.Context, credential *biz.Credential) error {
+	clone := *credential
+	r.byPlatformAccountID[credential.PlatformAccountID] = &clone
+	return nil
+}
+
+func (r *memoryCredentialRepo) GetByPlatformAccountID(_ context.Context, platformAccountID string) (*biz.Credential, error) {
+	credential := r.byPlatformAccountID[platformAccountID]
+	if credential == nil {
+		return nil, nil
+	}
+
+	clone := *credential
+	return &clone, nil
+}
+
+func (r *memoryCredentialRepo) DeleteByPlatformAccountID(_ context.Context, platformAccountID string) error {
+	delete(r.byPlatformAccountID, platformAccountID)
+	return nil
+}
+
+type memoryDeviceRepo struct {
+	byPlatformAccountID map[string][]*biz.Device
+}
+
+func newMemoryDeviceRepo() *memoryDeviceRepo {
+	return &memoryDeviceRepo{byPlatformAccountID: make(map[string][]*biz.Device)}
+}
+
+func (r *memoryDeviceRepo) Save(_ context.Context, device *biz.Device) error {
+	clone := *device
+	current := r.byPlatformAccountID[device.PlatformAccountID]
+	for index, existing := range current {
+		if existing.DeviceID == device.DeviceID {
+			current[index] = &clone
+			r.byPlatformAccountID[device.PlatformAccountID] = current
+			return nil
+		}
+	}
+
+	r.byPlatformAccountID[device.PlatformAccountID] = append(current, &clone)
+	return nil
+}
+
+func (r *memoryDeviceRepo) ListByPlatformAccountID(_ context.Context, platformAccountID string) ([]*biz.Device, error) {
+	devices := r.byPlatformAccountID[platformAccountID]
+	result := make([]*biz.Device, 0, len(devices))
+	for _, device := range devices {
+		clone := *device
+		result = append(result, &clone)
+	}
+
+	return result, nil
+}
+
+func (r *memoryDeviceRepo) DeleteByPlatformAccountID(_ context.Context, platformAccountID string) error {
+	delete(r.byPlatformAccountID, platformAccountID)
+	return nil
+}
+
+type memoryProfileRepo struct {
+	byPlatformAccountID map[string][]*biz.Profile
+}
+
+func newMemoryProfileRepo() *memoryProfileRepo {
+	return &memoryProfileRepo{byPlatformAccountID: make(map[string][]*biz.Profile)}
+}
+
+func (r *memoryProfileRepo) Save(_ context.Context, profile *biz.Profile) error {
+	clone := *profile
+	current := r.byPlatformAccountID[profile.PlatformAccountID]
+	for index, existing := range current {
+		if existing.PlayerID == profile.PlayerID && existing.Region == profile.Region {
+			current[index] = &clone
+			r.byPlatformAccountID[profile.PlatformAccountID] = current
+			return nil
+		}
+	}
+
+	r.byPlatformAccountID[profile.PlatformAccountID] = append(current, &clone)
+	return nil
+}
+
+func (r *memoryProfileRepo) ListByPlatformAccountID(_ context.Context, platformAccountID string) ([]*biz.Profile, error) {
+	profiles := r.byPlatformAccountID[platformAccountID]
+	result := make([]*biz.Profile, 0, len(profiles))
+	for _, profile := range profiles {
+		clone := *profile
+		result = append(result, &clone)
+	}
+
+	return result, nil
+}
+
+func (r *memoryProfileRepo) DeleteByPlatformAccountID(_ context.Context, platformAccountID string) error {
+	delete(r.byPlatformAccountID, platformAccountID)
+	return nil
+}
+
+func (r *memoryProfileRepo) DeleteMissingByPlatformAccountID(_ context.Context, platformAccountID string, keep []biz.ProfileIdentity) error {
+	profiles := r.byPlatformAccountID[platformAccountID]
+	keepSet := make(map[string]struct{}, len(keep))
+	for _, identity := range keep {
+		keepSet[identity.PlayerID+":"+identity.Region] = struct{}{}
+	}
+	filtered := make([]*biz.Profile, 0, len(profiles))
+	for _, profile := range profiles {
+		if _, ok := keepSet[profile.PlayerID+":"+profile.Region]; ok {
+			filtered = append(filtered, profile)
+		}
+	}
+	r.byPlatformAccountID[platformAccountID] = filtered
+	return nil
+}
+
+type memoryArtifactRepo struct {
+	artifacts map[string]*biz.Artifact
+}
+
+func newMemoryArtifactRepo() *memoryArtifactRepo {
+	return &memoryArtifactRepo{artifacts: make(map[string]*biz.Artifact)}
+}
+
+func (r *memoryArtifactRepo) Put(_ context.Context, artifact *biz.Artifact) error {
+	clone := *artifact
+	r.artifacts[artifactKey(artifact.PlatformAccountID, artifact.ArtifactType, artifact.ScopeKey)] = &clone
+	return nil
+}
+
+func (r *memoryArtifactRepo) Get(_ context.Context, platformAccountID, artifactType, scopeKey string) (*biz.Artifact, error) {
+	artifact := r.artifacts[artifactKey(platformAccountID, artifactType, scopeKey)]
+	if artifact == nil || !artifact.ExpiresAt.After(time.Now()) {
+		return nil, nil
+	}
+
+	clone := *artifact
+	return &clone, nil
+}
+
+func (r *memoryArtifactRepo) DeleteByPlatformAccountID(_ context.Context, platformAccountID string) error {
+	for key, artifact := range r.artifacts {
+		if artifact.PlatformAccountID == platformAccountID {
+			delete(r.artifacts, key)
+		}
+	}
+	return nil
+}
+
+func artifactKey(platformAccountID, artifactType, scopeKey string) string {
+	return platformAccountID + ":" + artifactType + ":" + scopeKey
+}
+
+var _ biz.CredentialRepository = (*memoryCredentialRepo)(nil)
+var _ biz.DeviceRepository = (*memoryDeviceRepo)(nil)
+var _ biz.ProfileRepository = (*memoryProfileRepo)(nil)
+var _ biz.ArtifactRepository = (*memoryArtifactRepo)(nil)
+var _ biz.CredentialManagementRepository = (*memoryManagementRepo)(nil)
+var _ platformmihomo.Client = platformmihomo.StubClient{}

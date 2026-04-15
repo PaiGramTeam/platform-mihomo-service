@@ -1,0 +1,19 @@
+server:
+  grpc:
+    network: tcp
+    addr: "0.0.0.0:9000"
+    timeout_seconds: 5
+data:
+  database:
+    driver: mysql
+    source: "paigram_hoyo:paigram_hoyo@tcp(127.0.0.1:3306)/platform_mihomo?charset=utf8mb4&parseTime=True&loc=UTC"
+  redis:
+    addr: "127.0.0.1:6379"
+    password: ""
+    db: 0
+    prefix: "platform-mihomo:"
+security:
+  # Replace both keys with real 32-byte secrets before running the service.
+  credential_encryption_key: 0123456789abcdef0123456789abcdef
+  service_ticket_signing_key: fedcba9876543210fedcba9876543210
+  service_ticket_issuer: paigram-account-center
