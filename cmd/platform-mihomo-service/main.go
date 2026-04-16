@@ -65,7 +65,7 @@ func main() {
 	profileUC := usecase.NewProfileUsecase(profileRepo)
 	authkeyUC := usecase.NewAuthkeyUsecase(credentialRepo, artifactRepo, client, []byte(bc.GetSecurity().GetCredentialEncryptionKey()))
 	managementUC := usecase.NewManagementUsecase(credentialRepo, deviceRepo, profileRepo, artifactRepo, managementRepo, bindUC, profileUC)
-	hoyoSvc := service.NewMihomoAccountService(
+	mihomoSvc := service.NewMihomoAccountService(
 		ticketVerifier,
 		bindUC,
 		statusUC,
@@ -74,8 +74,9 @@ func main() {
 		managementUC,
 	)
 	sharedSvc := service.NewMihomoCredentialService(ticketVerifier, managementUC)
+	genericSvc := service.NewGenericPlatformService(ticketVerifier, managementUC)
 
-	grpcSrv := server.NewGRPCServer(&bc, hoyoSvc, sharedSvc)
+	grpcSrv := server.NewGRPCServer(&bc, mihomoSvc, sharedSvc, genericSvc)
 	app := kratos.New(
 		kratos.Name("platform-mihomo-service"),
 		kratos.Server(grpcSrv),
