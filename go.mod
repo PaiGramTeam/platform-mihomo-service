@@ -3,7 +3,7 @@ module platform-mihomo-service
 go 1.24.0
 
 require (
-	github.com/PaiGramTeam/proto-contracts v0.0.0-20260415161147-f0505e01b851
+	github.com/PaiGramTeam/proto-contracts v0.0.0-20260416033414-4016470bc78d
 	github.com/go-kratos/kratos/v2 v2.9.2
 	github.com/go-sql-driver/mysql v1.8.1
 	github.com/golang-jwt/jwt/v5 v5.3.1
