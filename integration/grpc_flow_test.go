@@ -46,7 +46,7 @@ func TestBindThenGetAuthKeyFlow(t *testing.T) {
 	require.NotEmpty(t, bindResp.PlatformAccountId)
 	require.NotEmpty(t, bindResp.Profiles)
 
-	authResp, err := client.GetAuthKey(testTicketForAccount(t, bindResp.PlatformAccountId), bindResp.PlatformAccountId, bindResp.Profiles[0].PlayerId)
+	authResp, err := client.GetAuthKey(testTicketForAccount(t, bindResp.PlatformAccountId, "mihomo.authkey.issue"), bindResp.PlatformAccountId, bindResp.Profiles[0].PlayerId)
 	require.NoError(t, err)
 	require.NotEmpty(t, authResp.Authkey)
 }
