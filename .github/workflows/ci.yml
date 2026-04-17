@@ -1,0 +1,105 @@
+name: ci
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: platform_mihomo_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run unit tests
+        run: go test -covermode=atomic -coverprofile=coverage-unit.out ./...
+        env:
+          TEST_DATABASE_SOURCE: root:root@tcp(127.0.0.1:3306)/platform_mihomo_test?charset=utf8mb4&parseTime=True&loc=UTC&multiStatements=true
+
+      - name: Upload unit coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: ./coverage-unit.out
+          flags: unit
+          name: unit-coverage
+          fail_ci_if_error: true
+          use_oidc: true
+          verbose: true
+
+      - name: Run go vet
+        run: go vet ./...
+
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: platform_mihomo_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run integration tests
+        run: go test -tags=integration -covermode=atomic -coverprofile=coverage-integration.out ./integration/...
+        env:
+          TEST_DATABASE_SOURCE: root:root@tcp(127.0.0.1:3306)/platform_mihomo_test?charset=utf8mb4&parseTime=True&loc=UTC&multiStatements=true
+
+      - name: Upload integration coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: ./coverage-integration.out
+          flags: integration
+          name: integration-coverage
+          fail_ci_if_error: true
+          use_oidc: true
+          verbose: true
