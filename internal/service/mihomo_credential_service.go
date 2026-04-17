@@ -32,11 +32,8 @@ func (s *MihomoCredentialService) GetCredentialSummary(ctx context.Context, req 
 	if err != nil {
 		return nil, status.Error(codes.Unauthenticated, "invalid service ticket")
 	}
-	if err := validateScopedPlatformAccountID(claims, req.GetPlatformAccountId()); err != nil {
-		return nil, err
-	}
-	if err := requireScopes(claims, "mihomo.credential.read_meta"); err != nil {
-		return nil, err
+	if _, err := scopedGuardForPlatformAccount(claims, req.GetPlatformAccountId(), usecase.ActionCredentialRead); err != nil {
+		return nil, mapUsecaseError(err)
 	}
 
 	output, err := s.managementUC.GetCredentialSummary(ctx, req.GetPlatformAccountId())

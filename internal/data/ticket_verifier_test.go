@@ -1,0 +1,147 @@
+package data
+
+import (
+	"testing"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/stretchr/testify/require"
+)
+
+const (
+	testTicketIssuer   = "paigram-account-center"
+	testTicketAudience = "platform-mihomo-service"
+)
+
+var testTicketSigningKey = []byte("0123456789abcdef0123456789abcdef")
+
+func TestVerifyAcceptsBindingAwareClaims(t *testing.T) {
+	verifier := NewTicketVerifier(testTicketIssuer, testTicketSigningKey)
+	raw := issueTestTicket(t, map[string]any{
+		"actor_type":          "consumer",
+		"actor_id":            "user-1",
+		"owner_user_id":       float64(1),
+		"binding_id":          float64(101),
+		"platform":            "mihomo",
+		"platform_account_id": "binding_101_10001",
+		"consumer":            "paigram",
+		"profile_id":          float64(1001),
+		"scopes":              []string{"mihomo.profile.read"},
+	})
+
+	claims, err := verifier.Verify(raw, testTicketAudience)
+	require.NoError(t, err)
+	require.Equal(t, "consumer", claims.ActorType)
+	require.Equal(t, "user-1", claims.ActorID)
+	require.Equal(t, uint64(1), claims.OwnerUserID)
+	require.Equal(t, uint64(101), claims.BindingID)
+	require.Equal(t, "mihomo", claims.Platform)
+	require.Equal(t, "binding_101_10001", claims.PlatformAccountID)
+	require.Equal(t, "paigram", claims.Consumer)
+	require.Equal(t, uint64(1001), claims.ProfileID)
+	require.Equal(t, []string{"mihomo.profile.read"}, claims.Scopes)
+	require.Equal(t, testTicketAudience, claims.Audience)
+	require.Equal(t, uint64(101), claims.PlatformAccountRefID)
+}
+
+func TestVerifyNormalizesAllowedActionsClaim(t *testing.T) {
+	verifier := NewTicketVerifier(testTicketIssuer, testTicketSigningKey)
+	raw := issueTestTicket(t, map[string]any{
+		"actor_type":          "consumer",
+		"actor_id":            "user-1",
+		"owner_user_id":       float64(1),
+		"binding_id":          float64(101),
+		"platform":            "mihomo",
+		"platform_account_id": "binding_101_10001",
+		"consumer":            "paigram",
+		"allowed_actions":     []string{"mihomo.profile.read", "mihomo.profile.write"},
+	})
+
+	claims, err := verifier.Verify(raw, testTicketAudience)
+	require.NoError(t, err)
+	require.Equal(t, []string{"mihomo.profile.read", "mihomo.profile.write"}, claims.Scopes)
+}
+
+func TestVerifyPrefersAllowedActionsOverScopes(t *testing.T) {
+	verifier := NewTicketVerifier(testTicketIssuer, testTicketSigningKey)
+	raw := issueTestTicket(t, map[string]any{
+		"actor_type":          "consumer",
+		"actor_id":            "user-1",
+		"owner_user_id":       float64(1),
+		"binding_id":          float64(101),
+		"platform":            "mihomo",
+		"platform_account_id": "binding_101_10001",
+		"consumer":            "paigram",
+		"scopes":              []string{"mihomo.profile.read"},
+		"allowed_actions":     []string{"mihomo.profile.write"},
+	})
+
+	claims, err := verifier.Verify(raw, testTicketAudience)
+	require.NoError(t, err)
+	require.Equal(t, []string{"mihomo.profile.write"}, claims.Scopes)
+}
+
+func TestVerifyRejectsMissingBindingID(t *testing.T) {
+	verifier := NewTicketVerifier(testTicketIssuer, testTicketSigningKey)
+	raw := issueTestTicket(t, map[string]any{
+		"actor_type":    "consumer",
+		"actor_id":      "user-1",
+		"owner_user_id": float64(1),
+		"platform":      "mihomo",
+		"consumer":      "paigram",
+		"scopes":        []string{"mihomo.profile.read"},
+	})
+
+	_, err := verifier.Verify(raw, testTicketAudience)
+	require.ErrorContains(t, err, "binding_id")
+}
+
+func TestVerifyRejectsConsumerActorWithoutConsumerClaim(t *testing.T) {
+	verifier := NewTicketVerifier(testTicketIssuer, testTicketSigningKey)
+	raw := issueTestTicket(t, map[string]any{
+		"actor_type":    "consumer",
+		"actor_id":      "user-1",
+		"owner_user_id": float64(1),
+		"binding_id":    float64(101),
+		"platform":      "mihomo",
+		"scopes":        []string{"mihomo.profile.read"},
+	})
+
+	_, err := verifier.Verify(raw, testTicketAudience)
+	require.ErrorContains(t, err, "consumer")
+}
+
+func TestVerifyRejectsMismatchedLegacyPlatformAccountRefID(t *testing.T) {
+	verifier := NewTicketVerifier(testTicketIssuer, testTicketSigningKey)
+	raw := issueTestTicket(t, map[string]any{
+		"actor_type":              "consumer",
+		"actor_id":                "user-1",
+		"owner_user_id":           float64(1),
+		"binding_id":              float64(101),
+		"platform":                "mihomo",
+		"consumer":                "paigram",
+		"platform_account_ref_id": float64(202),
+	})
+
+	_, err := verifier.Verify(raw, testTicketAudience)
+	require.ErrorContains(t, err, "binding_id does not match platform_account_ref_id")
+}
+
+func issueTestTicket(t *testing.T, claims map[string]any) string {
+	t.Helper()
+
+	baseClaims := jwt.MapClaims{
+		"iss": testTicketIssuer,
+		"aud": []string{testTicketAudience},
+		"exp": time.Now().Add(time.Minute).Unix(),
+	}
+	for key, value := range claims {
+		baseClaims[key] = value
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, baseClaims)
+	signed, err := token.SignedString(testTicketSigningKey)
+	require.NoError(t, err)
+
+	return signed
+}

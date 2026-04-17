@@ -30,7 +30,7 @@ func TestBindCredentialReturnsDiscoveredProfiles(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	require.Equal(t, "hoyo_ref_101_10001", bindResp.PlatformAccountId)
+	require.Equal(t, "binding_101_10001", bindResp.PlatformAccountId)
 	require.Len(t, bindResp.Profiles, 1)
 
 	upsertResp, err := svc.UpsertDevice(context.Background(), &v1.UpsertDeviceRequest{
@@ -42,7 +42,7 @@ func TestBindCredentialReturnsDiscoveredProfiles(t *testing.T) {
 	require.True(t, upsertResp.Success)
 
 	confirmResp, err := svc.ConfirmPrimaryProfile(context.Background(), &v1.ConfirmPrimaryProfileRequest{
-		ServiceTicket:     signedServiceTicketForAccount(t, bindResp.PlatformAccountId, "mihomo.profile.read"),
+		ServiceTicket:     signedServiceTicketForAccount(t, bindResp.PlatformAccountId, "mihomo.profile.write"),
 		PlatformAccountId: bindResp.PlatformAccountId,
 		PlayerId:          "1008611",
 	})
@@ -51,7 +51,7 @@ func TestBindCredentialReturnsDiscoveredProfiles(t *testing.T) {
 	require.Equal(t, "1008611", confirmResp.Profile.PlayerId)
 
 	statusResp, err := svc.GetCredentialStatus(context.Background(), &v1.GetCredentialStatusRequest{
-		ServiceTicket:     signedServiceTicketForAccount(t, bindResp.PlatformAccountId),
+		ServiceTicket:     signedServiceTicketForAccount(t, bindResp.PlatformAccountId, "mihomo.status.read"),
 		PlatformAccountId: bindResp.PlatformAccountId,
 	})
 	require.NoError(t, err)
@@ -59,7 +59,7 @@ func TestBindCredentialReturnsDiscoveredProfiles(t *testing.T) {
 	require.NotNil(t, statusResp.LastValidatedAt)
 
 	validateResp, err := svc.ValidateCredential(context.Background(), &v1.ValidateCredentialRequest{
-		ServiceTicket:     signedServiceTicketForAccount(t, bindResp.PlatformAccountId),
+		ServiceTicket:     signedServiceTicketForAccount(t, bindResp.PlatformAccountId, "mihomo.status.read"),
 		PlatformAccountId: bindResp.PlatformAccountId,
 	})
 	require.NoError(t, err)
@@ -67,7 +67,7 @@ func TestBindCredentialReturnsDiscoveredProfiles(t *testing.T) {
 	require.Empty(t, validateResp.ErrorCode)
 
 	refreshResp, err := svc.RefreshCredential(context.Background(), &v1.RefreshCredentialRequest{
-		ServiceTicket:     signedServiceTicketForAccount(t, bindResp.PlatformAccountId),
+		ServiceTicket:     signedServiceTicketForAccount(t, bindResp.PlatformAccountId, "mihomo.status.read"),
 		PlatformAccountId: bindResp.PlatformAccountId,
 	})
 	require.NoError(t, err)
@@ -75,7 +75,7 @@ func TestBindCredentialReturnsDiscoveredProfiles(t *testing.T) {
 	require.NotNil(t, refreshResp.RefreshedAt)
 
 	profilesResp, err := svc.ListProfiles(context.Background(), &v1.ListProfilesRequest{
-		ServiceTicket:     signedServiceTicketForAccount(t, bindResp.PlatformAccountId),
+		ServiceTicket:     signedServiceTicketForAccount(t, bindResp.PlatformAccountId, "mihomo.profile.read"),
 		PlatformAccountId: bindResp.PlatformAccountId,
 	})
 	require.NoError(t, err)
@@ -83,7 +83,7 @@ func TestBindCredentialReturnsDiscoveredProfiles(t *testing.T) {
 	require.Equal(t, "1008611", profilesResp.Profiles[0].PlayerId)
 
 	primaryResp, err := svc.GetPrimaryProfile(context.Background(), &v1.GetPrimaryProfileRequest{
-		ServiceTicket:     signedServiceTicketForAccount(t, bindResp.PlatformAccountId),
+		ServiceTicket:     signedServiceTicketForAccount(t, bindResp.PlatformAccountId, "mihomo.profile.read"),
 		PlatformAccountId: bindResp.PlatformAccountId,
 	})
 	require.NoError(t, err)
@@ -91,7 +91,7 @@ func TestBindCredentialReturnsDiscoveredProfiles(t *testing.T) {
 	require.Equal(t, "1008611", primaryResp.Profile.PlayerId)
 
 	authkeyResp, err := svc.GetAuthKey(context.Background(), &v1.GetAuthKeyRequest{
-		ServiceTicket:     signedServiceTicketForAccount(t, bindResp.PlatformAccountId),
+		ServiceTicket:     signedServiceTicketForAccount(t, bindResp.PlatformAccountId, "mihomo.authkey.issue"),
 		PlatformAccountId: bindResp.PlatformAccountId,
 		PlayerId:          primaryResp.Profile.PlayerId,
 	})
@@ -160,8 +160,8 @@ func TestDeleteCredentialRemovesCredential(t *testing.T) {
 func TestGetCredentialStatusRejectsOutOfScopePlatformAccountID(t *testing.T) {
 	svc := newMihomoAccountServiceForTest(t)
 	_, err := svc.GetCredentialStatus(context.Background(), &v1.GetCredentialStatusRequest{
-		ServiceTicket:     signedServiceTicketForAccount(t, "hoyo_ref_101_10001"),
-		PlatformAccountId: "hoyo_ref_999_10001",
+		ServiceTicket:     signedServiceTicketForAccount(t, "binding_101_10001", "mihomo.status.read"),
+		PlatformAccountId: "binding_999_10001",
 	})
 	require.Error(t, err)
 	require.Equal(t, codes.PermissionDenied, status.Code(err))
@@ -177,7 +177,7 @@ func TestConfirmPrimaryProfileRejectsUnknownPlayerID(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = svc.ConfirmPrimaryProfile(context.Background(), &v1.ConfirmPrimaryProfileRequest{
-		ServiceTicket:     signedServiceTicketForAccount(t, bindResp.PlatformAccountId, "mihomo.profile.read"),
+		ServiceTicket:     signedServiceTicketForAccount(t, bindResp.PlatformAccountId, "mihomo.profile.write"),
 		PlatformAccountId: bindResp.PlatformAccountId,
 		PlayerId:          "not-found",
 	})
@@ -188,8 +188,8 @@ func TestConfirmPrimaryProfileRejectsUnknownPlayerID(t *testing.T) {
 func TestUpsertDeviceRejectsUnknownScopedAccount(t *testing.T) {
 	svc := newMihomoAccountServiceForTest(t)
 	_, err := svc.UpsertDevice(context.Background(), &v1.UpsertDeviceRequest{
-		ServiceTicket:     signedServiceTicketForAccount(t, "hoyo_ref_101_missing", "mihomo.device.update"),
-		PlatformAccountId: "hoyo_ref_101_missing",
+		ServiceTicket:     signedServiceTicketForAccount(t, "binding_101_missing", "mihomo.device.update"),
+		PlatformAccountId: "binding_101_missing",
 		Device:            &v1.DeviceInfo{DeviceId: "aaaaaaaa-1234-1234-1234-123456789abc", DeviceFp: "bbbbbbbbbbbbbb"},
 	})
 	require.Error(t, err)
@@ -208,6 +208,174 @@ func TestDeleteCredentialRejectsMissingScope(t *testing.T) {
 	_, err = svc.DeleteCredential(context.Background(), &v1.DeleteCredentialRequest{
 		ServiceTicket:     signedServiceTicketForAccount(t, bindResp.PlatformAccountId),
 		PlatformAccountId: bindResp.PlatformAccountId,
+	})
+	require.Error(t, err)
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
+func TestBindCredentialRejectsMissingScope(t *testing.T) {
+	svc := newMihomoAccountServiceForTest(t)
+
+	_, err := svc.BindCredential(context.Background(), &v1.BindCredentialRequest{
+		ServiceTicket:    signedServiceTicketForAccount(t, ""),
+		CookieBundleJson: `{"account_id":"10001","cookie_token":"abc"}`,
+		Device:           &v1.DeviceInfo{DeviceId: "device-1", DeviceFp: "fp-1", DeviceName: "iPhone"},
+	})
+	require.Error(t, err)
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
+func TestGetCredentialSummaryRejectsMissingScope(t *testing.T) {
+	svc := newMihomoAccountServiceForTest(t)
+	bindResp := bindCredentialForServiceTest(t, svc)
+
+	_, err := svc.GetCredentialSummary(context.Background(), &v1.GetCredentialSummaryRequest{
+		ServiceTicket:     signedServiceTicketForAccount(t, bindResp.PlatformAccountId),
+		PlatformAccountId: bindResp.PlatformAccountId,
+	})
+	require.Error(t, err)
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
+func TestUpdateCredentialRejectsMissingScope(t *testing.T) {
+	svc := newMihomoAccountServiceForTest(t)
+	bindResp := bindCredentialForServiceTest(t, svc)
+
+	_, err := svc.UpdateCredential(context.Background(), &v1.UpdateCredentialRequest{
+		ServiceTicket:     signedServiceTicketForAccount(t, bindResp.PlatformAccountId),
+		PlatformAccountId: bindResp.PlatformAccountId,
+		CookieBundleJson:  `{"account_id":"10001","cookie_token":"updated"}`,
+		Device:            &v1.DeviceInfo{DeviceId: "device-2", DeviceFp: "fp-2", DeviceName: "iPad"},
+	})
+	require.Error(t, err)
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
+func TestListProfilesRejectsMissingScope(t *testing.T) {
+	svc := newMihomoAccountServiceForTest(t)
+	bindResp := bindCredentialForServiceTest(t, svc)
+
+	_, err := svc.ListProfiles(context.Background(), &v1.ListProfilesRequest{
+		ServiceTicket:     signedServiceTicketForAccount(t, bindResp.PlatformAccountId),
+		PlatformAccountId: bindResp.PlatformAccountId,
+	})
+	require.Error(t, err)
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
+func TestGetPrimaryProfileRejectsMissingScope(t *testing.T) {
+	svc := newMihomoAccountServiceForTest(t)
+	bindResp := bindCredentialForServiceTest(t, svc)
+
+	_, err := svc.GetPrimaryProfile(context.Background(), &v1.GetPrimaryProfileRequest{
+		ServiceTicket:     signedServiceTicketForAccount(t, bindResp.PlatformAccountId),
+		PlatformAccountId: bindResp.PlatformAccountId,
+	})
+	require.Error(t, err)
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
+func TestGetCredentialStatusRejectsMissingScope(t *testing.T) {
+	svc := newMihomoAccountServiceForTest(t)
+	bindResp := bindCredentialForServiceTest(t, svc)
+
+	_, err := svc.GetCredentialStatus(context.Background(), &v1.GetCredentialStatusRequest{
+		ServiceTicket:     signedServiceTicketForAccount(t, bindResp.PlatformAccountId),
+		PlatformAccountId: bindResp.PlatformAccountId,
+	})
+	require.Error(t, err)
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
+func TestValidateCredentialRejectsMissingScope(t *testing.T) {
+	svc := newMihomoAccountServiceForTest(t)
+	bindResp := bindCredentialForServiceTest(t, svc)
+
+	_, err := svc.ValidateCredential(context.Background(), &v1.ValidateCredentialRequest{
+		ServiceTicket:     signedServiceTicketForAccount(t, bindResp.PlatformAccountId),
+		PlatformAccountId: bindResp.PlatformAccountId,
+	})
+	require.Error(t, err)
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
+func TestRefreshCredentialRejectsMissingScope(t *testing.T) {
+	svc := newMihomoAccountServiceForTest(t)
+	bindResp := bindCredentialForServiceTest(t, svc)
+
+	_, err := svc.RefreshCredential(context.Background(), &v1.RefreshCredentialRequest{
+		ServiceTicket:     signedServiceTicketForAccount(t, bindResp.PlatformAccountId),
+		PlatformAccountId: bindResp.PlatformAccountId,
+	})
+	require.Error(t, err)
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
+func TestUpsertDeviceRejectsMissingScope(t *testing.T) {
+	svc := newMihomoAccountServiceForTest(t)
+	bindResp := bindCredentialForServiceTest(t, svc)
+
+	_, err := svc.UpsertDevice(context.Background(), &v1.UpsertDeviceRequest{
+		ServiceTicket:     signedServiceTicketForAccount(t, bindResp.PlatformAccountId),
+		PlatformAccountId: bindResp.PlatformAccountId,
+		Device:            &v1.DeviceInfo{DeviceId: "aaaaaaaa-1234-1234-1234-123456789abc", DeviceFp: "bbbbbbbbbbbbbb"},
+	})
+	require.Error(t, err)
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
+func TestConfirmPrimaryProfileRejectsMissingScope(t *testing.T) {
+	svc := newMihomoAccountServiceForTest(t)
+	bindResp := bindCredentialForServiceTest(t, svc)
+
+	_, err := svc.ConfirmPrimaryProfile(context.Background(), &v1.ConfirmPrimaryProfileRequest{
+		ServiceTicket:     signedServiceTicketForAccount(t, bindResp.PlatformAccountId),
+		PlatformAccountId: bindResp.PlatformAccountId,
+		PlayerId:          bindResp.Profiles[0].PlayerId,
+	})
+	require.Error(t, err)
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
+func TestConfirmPrimaryProfileRejectsReadOnlyScope(t *testing.T) {
+	svc := newMihomoAccountServiceForTest(t)
+	bindResp := bindCredentialForServiceTest(t, svc)
+
+	_, err := svc.ConfirmPrimaryProfile(context.Background(), &v1.ConfirmPrimaryProfileRequest{
+		ServiceTicket:     signedServiceTicketForAccount(t, bindResp.PlatformAccountId, "mihomo.profile.read"),
+		PlatformAccountId: bindResp.PlatformAccountId,
+		PlayerId:          bindResp.Profiles[0].PlayerId,
+	})
+	require.Error(t, err)
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
+func TestGetAuthKeyRejectsMissingScope(t *testing.T) {
+	svc := newMihomoAccountServiceForTest(t)
+	bindResp := bindCredentialForServiceTest(t, svc)
+
+	_, err := svc.GetAuthKey(context.Background(), &v1.GetAuthKeyRequest{
+		ServiceTicket:     signedServiceTicketForAccount(t, bindResp.PlatformAccountId),
+		PlatformAccountId: bindResp.PlatformAccountId,
+		PlayerId:          bindResp.Profiles[0].PlayerId,
+	})
+	require.Error(t, err)
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
+func TestGetAuthKeyRejectsForeignProfileScope(t *testing.T) {
+	svc := newMihomoAccountServiceForTest(t)
+	bindResp, err := svc.BindCredential(context.Background(), &v1.BindCredentialRequest{
+		ServiceTicket:    signedServiceTicket(t),
+		CookieBundleJson: `{"account_id":"10001","cookie_token":"abc"}`,
+		Device:           &v1.DeviceInfo{DeviceId: "device-1", DeviceFp: "fp-1", DeviceName: "iPhone"},
+	})
+	require.NoError(t, err)
+
+	_, err = svc.GetAuthKey(context.Background(), &v1.GetAuthKeyRequest{
+		ServiceTicket:     signedServiceTicketForProfile(t, bindResp.PlatformAccountId, 999, "mihomo.authkey.issue"),
+		PlatformAccountId: bindResp.PlatformAccountId,
+		PlayerId:          bindResp.Profiles[0].PlayerId,
 	})
 	require.Error(t, err)
 	require.Equal(t, codes.PermissionDenied, status.Code(err))
@@ -235,22 +403,24 @@ const (
 
 var serviceTestSigningKey = []byte("0123456789abcdef0123456789abcdef")
 
-func signedServiceTicket(t *testing.T) string { return signedServiceTicketForAccount(t, "") }
+func signedServiceTicket(t *testing.T) string {
+	return signedServiceTicketForAccount(t, "", "mihomo.credential.bind")
+}
 
 func signedServiceTicketForAccount(t *testing.T, platformAccountID string, scopes ...string) string {
 	t.Helper()
 
 	claims := jwt.MapClaims{
-		"iss":                     serviceTestIssuer,
-		"aud":                     []string{serviceTestAudience},
-		"actor_type":              "bot",
-		"actor_id":                "bot-paigram",
-		"owner_user_id":           float64(1),
-		"bot_id":                  "bot-paigram",
-		"platform":                "mihomo",
-		"platform_service_key":    serviceTestAudience,
-		"platform_account_ref_id": float64(101),
-		"exp":                     time.Now().Add(time.Minute).Unix(),
+		"iss":                  serviceTestIssuer,
+		"aud":                  []string{serviceTestAudience},
+		"actor_type":           "bot",
+		"actor_id":             "bot-paigram",
+		"owner_user_id":        float64(1),
+		"binding_id":           float64(101),
+		"bot_id":               "bot-paigram",
+		"platform":             "mihomo",
+		"platform_service_key": serviceTestAudience,
+		"exp":                  time.Now().Add(time.Minute).Unix(),
 	}
 	if platformAccountID != "" {
 		claims["platform_account_id"] = platformAccountID
@@ -264,6 +434,45 @@ func signedServiceTicketForAccount(t *testing.T, platformAccountID string, scope
 	require.NoError(t, err)
 
 	return signed
+}
+
+func signedServiceTicketForProfile(t *testing.T, platformAccountID string, profileID uint64, scopes ...string) string {
+	t.Helper()
+
+	claims := jwt.MapClaims{
+		"iss":                  serviceTestIssuer,
+		"aud":                  []string{serviceTestAudience},
+		"actor_type":           "bot",
+		"actor_id":             "bot-paigram",
+		"owner_user_id":        float64(1),
+		"binding_id":           float64(101),
+		"bot_id":               "bot-paigram",
+		"platform":             "mihomo",
+		"platform_service_key": serviceTestAudience,
+		"platform_account_id":  platformAccountID,
+		"profile_id":           float64(profileID),
+		"exp":                  time.Now().Add(time.Minute).Unix(),
+	}
+	if len(scopes) > 0 {
+		claims["scopes"] = scopes
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	signed, err := token.SignedString(serviceTestSigningKey)
+	require.NoError(t, err)
+	return signed
+}
+
+func bindCredentialForServiceTest(t *testing.T, svc *MihomoAccountService) *v1.BindCredentialResponse {
+	t.Helper()
+
+	bindResp, err := svc.BindCredential(context.Background(), &v1.BindCredentialRequest{
+		ServiceTicket:    signedServiceTicket(t),
+		CookieBundleJson: `{"account_id":"10001","cookie_token":"abc"}`,
+		Device:           &v1.DeviceInfo{DeviceId: "device-1", DeviceFp: "fp-1", DeviceName: "iPhone"},
+	})
+	require.NoError(t, err)
+	return bindResp
 }
 
 func newMihomoAccountServiceForTest(t *testing.T) *MihomoAccountService {
@@ -321,8 +530,14 @@ func newMemoryManagementRepo(
 }
 
 func (r *memoryManagementRepo) DeleteCredentialGraph(_ context.Context, platformAccountID string) error {
+	if credential := r.credentialRepo.byPlatformAccountID[platformAccountID]; credential != nil {
+		delete(r.credentialRepo.byBindingID, credential.BindingID)
+	}
 	delete(r.credentialRepo.byPlatformAccountID, platformAccountID)
 	delete(r.deviceRepo.byPlatformAccountID, platformAccountID)
+	if profiles := r.profileRepo.byPlatformAccountID[platformAccountID]; len(profiles) > 0 {
+		delete(r.profileRepo.byBindingID, profiles[0].BindingID)
+	}
 	delete(r.profileRepo.byPlatformAccountID, platformAccountID)
 	for key, artifact := range r.artifactRepo.artifacts {
 		if artifact.PlatformAccountID == platformAccountID {
@@ -334,16 +549,31 @@ func (r *memoryManagementRepo) DeleteCredentialGraph(_ context.Context, platform
 
 type memoryCredentialRepo struct {
 	byPlatformAccountID map[string]*biz.Credential
+	byBindingID         map[uint64]*biz.Credential
 }
 
 func newMemoryCredentialRepo() *memoryCredentialRepo {
-	return &memoryCredentialRepo{byPlatformAccountID: make(map[string]*biz.Credential)}
+	return &memoryCredentialRepo{
+		byPlatformAccountID: make(map[string]*biz.Credential),
+		byBindingID:         make(map[uint64]*biz.Credential),
+	}
 }
 
 func (r *memoryCredentialRepo) Save(_ context.Context, credential *biz.Credential) error {
 	clone := *credential
 	r.byPlatformAccountID[credential.PlatformAccountID] = &clone
+	r.byBindingID[credential.BindingID] = &clone
 	return nil
+}
+
+func (r *memoryCredentialRepo) GetByBindingID(_ context.Context, bindingID uint64) (*biz.Credential, error) {
+	credential := r.byBindingID[bindingID]
+	if credential == nil {
+		return nil, nil
+	}
+
+	clone := *credential
+	return &clone, nil
 }
 
 func (r *memoryCredentialRepo) GetByPlatformAccountID(_ context.Context, platformAccountID string) (*biz.Credential, error) {
@@ -357,6 +587,9 @@ func (r *memoryCredentialRepo) GetByPlatformAccountID(_ context.Context, platfor
 }
 
 func (r *memoryCredentialRepo) DeleteByPlatformAccountID(_ context.Context, platformAccountID string) error {
+	if credential := r.byPlatformAccountID[platformAccountID]; credential != nil {
+		delete(r.byBindingID, credential.BindingID)
+	}
 	delete(r.byPlatformAccountID, platformAccountID)
 	return nil
 }
@@ -402,25 +635,49 @@ func (r *memoryDeviceRepo) DeleteByPlatformAccountID(_ context.Context, platform
 
 type memoryProfileRepo struct {
 	byPlatformAccountID map[string][]*biz.Profile
+	byBindingID         map[uint64][]*biz.Profile
 }
 
 func newMemoryProfileRepo() *memoryProfileRepo {
-	return &memoryProfileRepo{byPlatformAccountID: make(map[string][]*biz.Profile)}
+	return &memoryProfileRepo{
+		byPlatformAccountID: make(map[string][]*biz.Profile),
+		byBindingID:         make(map[uint64][]*biz.Profile),
+	}
 }
 
 func (r *memoryProfileRepo) Save(_ context.Context, profile *biz.Profile) error {
 	clone := *profile
 	current := r.byPlatformAccountID[profile.PlatformAccountID]
+	byBinding := r.byBindingID[profile.BindingID]
 	for index, existing := range current {
 		if existing.PlayerID == profile.PlayerID && existing.Region == profile.Region {
 			current[index] = &clone
 			r.byPlatformAccountID[profile.PlatformAccountID] = current
+			for bindingIndex, bindingProfile := range byBinding {
+				if bindingProfile.PlayerID == profile.PlayerID && bindingProfile.Region == profile.Region {
+					byBinding[bindingIndex] = &clone
+					r.byBindingID[profile.BindingID] = byBinding
+					return nil
+				}
+			}
 			return nil
 		}
 	}
 
 	r.byPlatformAccountID[profile.PlatformAccountID] = append(current, &clone)
+	r.byBindingID[profile.BindingID] = append(byBinding, &clone)
 	return nil
+}
+
+func (r *memoryProfileRepo) ListByBindingID(_ context.Context, bindingID uint64) ([]*biz.Profile, error) {
+	profiles := r.byBindingID[bindingID]
+	result := make([]*biz.Profile, 0, len(profiles))
+	for _, profile := range profiles {
+		clone := *profile
+		result = append(result, &clone)
+	}
+
+	return result, nil
 }
 
 func (r *memoryProfileRepo) ListByPlatformAccountID(_ context.Context, platformAccountID string) ([]*biz.Profile, error) {
@@ -435,6 +692,9 @@ func (r *memoryProfileRepo) ListByPlatformAccountID(_ context.Context, platformA
 }
 
 func (r *memoryProfileRepo) DeleteByPlatformAccountID(_ context.Context, platformAccountID string) error {
+	if profiles := r.byPlatformAccountID[platformAccountID]; len(profiles) > 0 {
+		delete(r.byBindingID, profiles[0].BindingID)
+	}
 	delete(r.byPlatformAccountID, platformAccountID)
 	return nil
 }
@@ -452,6 +712,13 @@ func (r *memoryProfileRepo) DeleteMissingByPlatformAccountID(_ context.Context, 
 		}
 	}
 	r.byPlatformAccountID[platformAccountID] = filtered
+	if len(filtered) == 0 {
+		if len(profiles) > 0 {
+			delete(r.byBindingID, profiles[0].BindingID)
+		}
+		return nil
+	}
+	r.byBindingID[filtered[0].BindingID] = filtered
 	return nil
 }
 

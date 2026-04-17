@@ -46,7 +46,7 @@ func TestBindThenGetAuthKeyFlow(t *testing.T) {
 	require.NotEmpty(t, bindResp.PlatformAccountId)
 	require.NotEmpty(t, bindResp.Profiles)
 
-	authResp, err := client.GetAuthKey(testTicketForAccount(t, bindResp.PlatformAccountId), bindResp.PlatformAccountId, bindResp.Profiles[0].PlayerId)
+	authResp, err := client.GetAuthKey(testTicketForAccount(t, bindResp.PlatformAccountId, "mihomo.authkey.issue"), bindResp.PlatformAccountId, bindResp.Profiles[0].PlayerId)
 	require.NoError(t, err)
 	require.NotEmpty(t, authResp.Authkey)
 }
@@ -206,7 +206,7 @@ func (c *testMihomoClient) DeleteCredential(serviceTicket string, platformAccoun
 	})
 }
 
-func testTicket(t *testing.T) string { return testTicketForAccount(t, "") }
+func testTicket(t *testing.T) string { return testTicketForAccount(t, "", "mihomo.credential.bind") }
 
 func testTicketForAccount(t *testing.T, platformAccountID string, scopes ...string) string {
 	t.Helper()
@@ -217,8 +217,10 @@ func testTicketForAccount(t *testing.T, platformAccountID string, scopes ...stri
 		"actor_type":              "bot",
 		"actor_id":                "bot-paigram",
 		"owner_user_id":           float64(1),
+		"binding_id":              float64(101),
 		"bot_id":                  "bot-paigram",
 		"platform":                "mihomo",
+		"user_id":                 float64(1),
 		"platform_service_key":    integrationTicketAudience,
 		"platform_account_ref_id": float64(101),
 		"exp":                     time.Now().Add(time.Minute).Unix(),

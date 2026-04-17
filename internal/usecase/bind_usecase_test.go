@@ -17,14 +17,15 @@ func TestBindCredentialPersistsCredentialDeviceAndProfiles(t *testing.T) {
 	uc := newBindUsecaseForTest()
 
 	resp, err := uc.BindCredential(context.Background(), BindCredentialInput{
-		PlatformAccountRefID: 101,
-		CookieBundleJSON:     `{"account_id":"10001","cookie_token":"abc"}`,
-		DeviceID:             "12345678-1234-1234-1234-123456789abc",
-		DeviceFP:             "abcdefghijklmn",
-		DeviceName:           "iPhone",
+		BindingID:        101,
+		CookieBundleJSON: `{"account_id":"10001","cookie_token":"abc"}`,
+		DeviceID:         "12345678-1234-1234-1234-123456789abc",
+		DeviceFP:         "abcdefghijklmn",
+		DeviceName:       "iPhone",
 	})
 	require.NoError(t, err)
-	require.Equal(t, "hoyo_ref_101_10001", resp.PlatformAccountID)
+	require.Equal(t, uint64(101), resp.BindingID)
+	require.Equal(t, "binding_101_10001", resp.PlatformAccountID)
 	require.Equal(t, v1.CredentialStatus_CREDENTIAL_STATUS_ACTIVE, resp.Status)
 	require.Len(t, resp.Profiles, 1)
 	require.Equal(t, "1008611", resp.Profiles[0].PlayerId)
@@ -32,6 +33,7 @@ func TestBindCredentialPersistsCredentialDeviceAndProfiles(t *testing.T) {
 
 	credential := uc.credentialRepo.byPlatformAccountID[resp.PlatformAccountID]
 	require.NotNil(t, credential)
+	require.Equal(t, uint64(101), credential.BindingID)
 	require.Equal(t, "mihomo", credential.Platform)
 	require.Equal(t, "10001", credential.AccountID)
 	require.Equal(t, "cn_gf01", credential.Region)
@@ -55,6 +57,7 @@ func TestBindCredentialPersistsCredentialDeviceAndProfiles(t *testing.T) {
 
 	persistedProfiles := uc.profileRepo.byPlatformAccountID[resp.PlatformAccountID]
 	require.Len(t, persistedProfiles, 1)
+	require.Equal(t, uint64(101), persistedProfiles[0].BindingID)
 	require.Equal(t, "Traveler", persistedProfiles[0].Nickname)
 	require.Equal(t, 60, persistedProfiles[0].Level)
 	require.True(t, persistedProfiles[0].IsDefault)
@@ -71,7 +74,32 @@ func TestBindCredentialPersistsCredentialDeviceAndProfiles(t *testing.T) {
 	require.Equal(t, "1008611", primary.PlayerId)
 }
 
-func TestBindCredentialRejectsMissingPlatformAccountRefID(t *testing.T) {
+func TestBindCredentialPersistsBindingIDOnCredentialAndProfiles(t *testing.T) {
+	uc := newBindUsecaseForTest()
+
+	out, err := uc.BindCredential(context.Background(), BindCredentialInput{
+		BindingID:        42,
+		CookieBundleJSON: `{"account_id":"10001","cookie_token":"abc"}`,
+		DeviceID:         "12345678-1234-1234-1234-123456789abc",
+		DeviceFP:         "abcdefghijklmn",
+	})
+	require.NoError(t, err)
+	require.Equal(t, uint64(42), out.BindingID)
+
+	credential, err := uc.credentialRepo.GetByBindingID(context.Background(), 42)
+	require.NoError(t, err)
+	require.NotNil(t, credential)
+	require.Equal(t, uint64(42), credential.BindingID)
+	require.Equal(t, out.PlatformAccountID, credential.PlatformAccountID)
+
+	profiles, err := uc.profileRepo.ListByBindingID(context.Background(), 42)
+	require.NoError(t, err)
+	require.NotEmpty(t, profiles)
+	require.Equal(t, uint64(42), profiles[0].BindingID)
+	require.Equal(t, out.PlatformAccountID, profiles[0].PlatformAccountID)
+}
+
+func TestBindCredentialRejectsMissingBindingID(t *testing.T) {
 	uc := newBindUsecaseForTest()
 
 	_, err := uc.BindCredential(context.Background(), BindCredentialInput{
@@ -82,16 +110,26 @@ func TestBindCredentialRejectsMissingPlatformAccountRefID(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestFormatPlatformAccountIDUsesBindingPrefix(t *testing.T) {
+	require.Equal(t, "binding_42_10001", FormatPlatformAccountID(42, "10001"))
+}
+
+func TestBindingIDFromPlatformAccountIDAcceptsLegacyPrefix(t *testing.T) {
+	bindingID, err := BindingIDFromPlatformAccountID("hoyo_ref_42_10001")
+	require.NoError(t, err)
+	require.Equal(t, uint64(42), bindingID)
+}
+
 func TestBindCredentialRollsBackWhenProfileSaveFails(t *testing.T) {
 	uc := newBindUsecaseForTest()
 	uc.profileRepo.failSave = true
 
 	_, err := uc.BindCredential(context.Background(), BindCredentialInput{
-		PlatformAccountRefID: 101,
-		CookieBundleJSON:     `{"account_id":"10001","cookie_token":"abc"}`,
-		DeviceID:             "12345678-1234-1234-1234-123456789abc",
-		DeviceFP:             "abcdefghijklmn",
-		DeviceName:           "iPhone",
+		BindingID:        101,
+		CookieBundleJSON: `{"account_id":"10001","cookie_token":"abc"}`,
+		DeviceID:         "12345678-1234-1234-1234-123456789abc",
+		DeviceFP:         "abcdefghijklmn",
+		DeviceName:       "iPhone",
 	})
 	require.Error(t, err)
 	require.Empty(t, uc.credentialRepo.byPlatformAccountID)
@@ -127,15 +165,20 @@ func newBindUsecaseForTest() *bindUsecaseTestHarness {
 
 type memoryCredentialRepo struct {
 	byPlatformAccountID map[string]*biz.Credential
+	byBindingID         map[uint64]*biz.Credential
 }
 
 func newMemoryCredentialRepo() *memoryCredentialRepo {
-	return &memoryCredentialRepo{byPlatformAccountID: make(map[string]*biz.Credential)}
+	return &memoryCredentialRepo{
+		byPlatformAccountID: make(map[string]*biz.Credential),
+		byBindingID:         make(map[uint64]*biz.Credential),
+	}
 }
 
 func (r *memoryCredentialRepo) Save(_ context.Context, credential *biz.Credential) error {
 	clone := *credential
 	r.byPlatformAccountID[credential.PlatformAccountID] = &clone
+	r.byBindingID[credential.BindingID] = &clone
 	return nil
 }
 
@@ -148,7 +191,19 @@ func (r *memoryCredentialRepo) GetByPlatformAccountID(_ context.Context, platfor
 	return &clone, nil
 }
 
+func (r *memoryCredentialRepo) GetByBindingID(_ context.Context, bindingID uint64) (*biz.Credential, error) {
+	credential := r.byBindingID[bindingID]
+	if credential == nil {
+		return nil, nil
+	}
+	clone := *credential
+	return &clone, nil
+}
+
 func (r *memoryCredentialRepo) DeleteByPlatformAccountID(_ context.Context, platformAccountID string) error {
+	if credential := r.byPlatformAccountID[platformAccountID]; credential != nil {
+		delete(r.byBindingID, credential.BindingID)
+	}
 	delete(r.byPlatformAccountID, platformAccountID)
 	return nil
 }
@@ -192,11 +247,15 @@ func (r *memoryDeviceRepo) DeleteByPlatformAccountID(_ context.Context, platform
 
 type memoryProfileRepo struct {
 	byPlatformAccountID map[string][]*biz.Profile
+	byBindingID         map[uint64][]*biz.Profile
 	failSave            bool
 }
 
 func newMemoryProfileRepo() *memoryProfileRepo {
-	return &memoryProfileRepo{byPlatformAccountID: make(map[string][]*biz.Profile)}
+	return &memoryProfileRepo{
+		byPlatformAccountID: make(map[string][]*biz.Profile),
+		byBindingID:         make(map[uint64][]*biz.Profile),
+	}
 }
 
 func (r *memoryProfileRepo) Save(_ context.Context, profile *biz.Profile) error {
@@ -205,14 +264,23 @@ func (r *memoryProfileRepo) Save(_ context.Context, profile *biz.Profile) error 
 	}
 	clone := *profile
 	current := r.byPlatformAccountID[profile.PlatformAccountID]
+	byBinding := r.byBindingID[profile.BindingID]
 	for index, existing := range current {
 		if existing.PlayerID == profile.PlayerID && existing.Region == profile.Region {
 			current[index] = &clone
 			r.byPlatformAccountID[profile.PlatformAccountID] = current
+			for bindingIndex, bindingProfile := range byBinding {
+				if bindingProfile.PlayerID == profile.PlayerID && bindingProfile.Region == profile.Region {
+					byBinding[bindingIndex] = &clone
+					r.byBindingID[profile.BindingID] = byBinding
+					return nil
+				}
+			}
 			return nil
 		}
 	}
 	r.byPlatformAccountID[profile.PlatformAccountID] = append(current, &clone)
+	r.byBindingID[profile.BindingID] = append(byBinding, &clone)
 	return nil
 }
 
@@ -226,7 +294,20 @@ func (r *memoryProfileRepo) ListByPlatformAccountID(_ context.Context, platformA
 	return result, nil
 }
 
+func (r *memoryProfileRepo) ListByBindingID(_ context.Context, bindingID uint64) ([]*biz.Profile, error) {
+	profiles := r.byBindingID[bindingID]
+	result := make([]*biz.Profile, 0, len(profiles))
+	for _, profile := range profiles {
+		clone := *profile
+		result = append(result, &clone)
+	}
+	return result, nil
+}
+
 func (r *memoryProfileRepo) DeleteByPlatformAccountID(_ context.Context, platformAccountID string) error {
+	if profiles := r.byPlatformAccountID[platformAccountID]; len(profiles) > 0 {
+		delete(r.byBindingID, profiles[0].BindingID)
+	}
 	delete(r.byPlatformAccountID, platformAccountID)
 	return nil
 }
@@ -244,6 +325,13 @@ func (r *memoryProfileRepo) DeleteMissingByPlatformAccountID(_ context.Context, 
 		}
 	}
 	r.byPlatformAccountID[platformAccountID] = filtered
+	if len(filtered) == 0 {
+		if len(profiles) > 0 {
+			delete(r.byBindingID, profiles[0].BindingID)
+		}
+		return nil
+	}
+	r.byBindingID[filtered[0].BindingID] = filtered
 	return nil
 }
 

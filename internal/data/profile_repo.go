@@ -20,6 +20,7 @@ func NewProfileRepo(db *gorm.DB) *ProfileRepo {
 
 func (r *ProfileRepo) Save(ctx context.Context, profile *biz.Profile) error {
 	record := model.AccountProfile{
+		BindingID:         profile.BindingID,
 		PlatformAccountID: profile.PlatformAccountID,
 		GameBiz:           profile.GameBiz,
 		Region:            profile.Region,
@@ -36,29 +37,22 @@ func (r *ProfileRepo) Save(ctx context.Context, profile *biz.Profile) error {
 	}).Create(&record).Error
 }
 
+func (r *ProfileRepo) ListByBindingID(ctx context.Context, bindingID uint64) ([]*biz.Profile, error) {
+	var records []model.AccountProfile
+	if err := r.db.WithContext(ctx).Where("binding_id = ?", bindingID).Order("id asc").Find(&records).Error; err != nil {
+		return nil, err
+	}
+
+	return profilesFromRecords(records), nil
+}
+
 func (r *ProfileRepo) ListByPlatformAccountID(ctx context.Context, platformAccountID string) ([]*biz.Profile, error) {
 	var records []model.AccountProfile
 	if err := r.db.WithContext(ctx).Where("platform_account_id = ?", platformAccountID).Order("id asc").Find(&records).Error; err != nil {
 		return nil, err
 	}
 
-	profiles := make([]*biz.Profile, 0, len(records))
-	for _, record := range records {
-		record := record
-		profiles = append(profiles, &biz.Profile{
-			ID:                record.ID,
-			PlatformAccountID: record.PlatformAccountID,
-			GameBiz:           record.GameBiz,
-			Region:            record.Region,
-			PlayerID:          record.PlayerID,
-			Nickname:          record.Nickname,
-			Level:             record.Level,
-			IsDefault:         record.IsDefault,
-			DiscoveredAt:      record.DiscoveredAt,
-		})
-	}
-
-	return profiles, nil
+	return profilesFromRecords(records), nil
 }
 
 func (r *ProfileRepo) DeleteByPlatformAccountID(ctx context.Context, platformAccountID string) error {
@@ -84,4 +78,25 @@ func (r *ProfileRepo) DeleteMissingByPlatformAccountID(ctx context.Context, plat
 		}
 	}
 	return nil
+}
+
+func profilesFromRecords(records []model.AccountProfile) []*biz.Profile {
+	profiles := make([]*biz.Profile, 0, len(records))
+	for _, record := range records {
+		record := record
+		profiles = append(profiles, &biz.Profile{
+			ID:                record.ID,
+			BindingID:         record.BindingID,
+			PlatformAccountID: record.PlatformAccountID,
+			GameBiz:           record.GameBiz,
+			Region:            record.Region,
+			PlayerID:          record.PlayerID,
+			Nickname:          record.Nickname,
+			Level:             record.Level,
+			IsDefault:         record.IsDefault,
+			DiscoveredAt:      record.DiscoveredAt,
+		})
+	}
+
+	return profiles
 }

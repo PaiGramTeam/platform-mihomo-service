@@ -6,6 +6,7 @@ import (
 )
 
 type Credential struct {
+	BindingID         uint64
 	PlatformAccountID string
 	Platform          string
 	AccountID         string
@@ -20,6 +21,7 @@ type Credential struct {
 
 type CredentialRepository interface {
 	Save(ctx context.Context, credential *Credential) error
+	GetByBindingID(ctx context.Context, bindingID uint64) (*Credential, error)
 	GetByPlatformAccountID(ctx context.Context, platformAccountID string) (*Credential, error)
 	DeleteByPlatformAccountID(ctx context.Context, platformAccountID string) error
 }
