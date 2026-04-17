@@ -206,7 +206,7 @@ func (c *testMihomoClient) DeleteCredential(serviceTicket string, platformAccoun
 	})
 }
 
-func testTicket(t *testing.T) string { return testTicketForAccount(t, "") }
+func testTicket(t *testing.T) string { return testTicketForAccount(t, "", "mihomo.credential.bind") }
 
 func testTicketForAccount(t *testing.T, platformAccountID string, scopes ...string) string {
 	t.Helper()

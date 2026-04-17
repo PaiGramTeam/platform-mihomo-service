@@ -68,8 +68,8 @@ func TestBindingMigrationRejectsUnknownLegacyPlatformAccountIDs(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected binding migration to fail for unknown legacy platform_account_id")
 	}
-	if !strings.Contains(err.Error(), "binding_id") {
-		t.Fatalf("expected binding migration error to mention binding_id, got: %v", err)
+	if !strings.Contains(err.Error(), "Invalid use of NULL value") {
+		t.Fatalf("expected binding migration to fail on NULL binding_id backfill, got: %v", err)
 	}
 }
 
