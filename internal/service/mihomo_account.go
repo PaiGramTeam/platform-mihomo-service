@@ -3,8 +3,6 @@ package service
 import (
 	"context"
 	"errors"
-	"fmt"
-	"strings"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -55,6 +53,9 @@ func (s *MihomoAccountService) BindCredential(ctx context.Context, req *v1.BindC
 	if err != nil {
 		return nil, err
 	}
+	if _, err := scopedGuard(claims, usecase.ActionCredentialBind); err != nil {
+		return nil, mapUsecaseError(err)
+	}
 
 	output, err := s.bindUC.BindCredential(ctx, toBindCredentialInput(req, claims))
 	if err != nil {
@@ -73,8 +74,8 @@ func (s *MihomoAccountService) GetCredentialStatus(ctx context.Context, req *v1.
 	if err != nil {
 		return nil, err
 	}
-	if err := validateScopedPlatformAccountID(claims, req.GetPlatformAccountId()); err != nil {
-		return nil, err
+	if _, err := scopedGuardForPlatformAccount(claims, req.GetPlatformAccountId(), usecase.ActionStatusRead); err != nil {
+		return nil, mapUsecaseError(err)
 	}
 
 	output, err := s.statusUC.GetCredentialStatus(ctx, req.GetPlatformAccountId())
@@ -97,8 +98,8 @@ func (s *MihomoAccountService) ValidateCredential(ctx context.Context, req *v1.V
 	if err != nil {
 		return nil, err
 	}
-	if err := validateScopedPlatformAccountID(claims, req.GetPlatformAccountId()); err != nil {
-		return nil, err
+	if _, err := scopedGuardForPlatformAccount(claims, req.GetPlatformAccountId(), usecase.ActionStatusRead); err != nil {
+		return nil, mapUsecaseError(err)
 	}
 
 	output, err := s.statusUC.ValidateCredential(ctx, req.GetPlatformAccountId())
@@ -118,8 +119,8 @@ func (s *MihomoAccountService) RefreshCredential(ctx context.Context, req *v1.Re
 	if err != nil {
 		return nil, err
 	}
-	if err := validateScopedPlatformAccountID(claims, req.GetPlatformAccountId()); err != nil {
-		return nil, err
+	if _, err := scopedGuardForPlatformAccount(claims, req.GetPlatformAccountId(), usecase.ActionStatusRead); err != nil {
+		return nil, mapUsecaseError(err)
 	}
 
 	output, err := s.statusUC.RefreshCredential(ctx, req.GetPlatformAccountId())
@@ -139,11 +140,13 @@ func (s *MihomoAccountService) ListProfiles(ctx context.Context, req *v1.ListPro
 	if err != nil {
 		return nil, err
 	}
-	if err := validateScopedPlatformAccountID(claims, req.GetPlatformAccountId()); err != nil {
-		return nil, err
+
+	guard, err := scopedGuardForPlatformAccount(claims, req.GetPlatformAccountId(), usecase.ActionProfileRead)
+	if err != nil {
+		return nil, mapUsecaseError(err)
 	}
 
-	profiles, err := s.profileUC.ListProfiles(ctx, req.GetPlatformAccountId())
+	profiles, err := s.profileUC.ListProfilesWithScope(ctx, guard, req.GetPlatformAccountId())
 	if err != nil {
 		return nil, mapUsecaseError(err)
 	}
@@ -160,11 +163,13 @@ func (s *MihomoAccountService) GetPrimaryProfile(ctx context.Context, req *v1.Ge
 	if err != nil {
 		return nil, err
 	}
-	if err := validateScopedPlatformAccountID(claims, req.GetPlatformAccountId()); err != nil {
-		return nil, err
+
+	guard, err := scopedGuardForPlatformAccount(claims, req.GetPlatformAccountId(), usecase.ActionProfileRead)
+	if err != nil {
+		return nil, mapUsecaseError(err)
 	}
 
-	profile, err := s.profileUC.GetPrimaryProfile(ctx, req.GetPlatformAccountId())
+	profile, err := s.profileUC.GetPrimaryProfileWithScope(ctx, guard, req.GetPlatformAccountId())
 	if err != nil {
 		return nil, mapUsecaseError(err)
 	}
@@ -181,10 +186,14 @@ func (s *MihomoAccountService) GetAuthKey(ctx context.Context, req *v1.GetAuthKe
 	if err != nil {
 		return nil, err
 	}
-	if err := validateScopedPlatformAccountID(claims, req.GetPlatformAccountId()); err != nil {
-		return nil, err
-	}
 
+	guard, err := scopedGuardForPlatformAccount(claims, req.GetPlatformAccountId(), usecase.ActionAuthKeyIssue)
+	if err != nil {
+		return nil, mapUsecaseError(err)
+	}
+	if err := s.profileUC.RequireProfileAccessByPlayerID(ctx, guard, req.GetPlatformAccountId(), req.GetPlayerId()); err != nil {
+		return nil, mapUsecaseError(err)
+	}
 	output, err := s.authkeyUC.GetAuthKey(ctx, req.GetPlatformAccountId(), req.GetPlayerId())
 	if err != nil {
 		return nil, mapUsecaseError(err)
@@ -202,11 +211,9 @@ func (s *MihomoAccountService) GetCredentialSummary(ctx context.Context, req *v1
 	if err != nil {
 		return nil, err
 	}
-	if err := validateScopedPlatformAccountID(claims, req.GetPlatformAccountId()); err != nil {
-		return nil, err
-	}
-	if err := requireScopes(claims, "mihomo.credential.read_meta"); err != nil {
-		return nil, err
+
+	if _, err := scopedGuardForPlatformAccount(claims, req.GetPlatformAccountId(), usecase.ActionCredentialRead); err != nil {
+		return nil, mapUsecaseError(err)
 	}
 
 	output, err := s.managementUC.GetCredentialSummary(ctx, req.GetPlatformAccountId())
@@ -226,11 +233,8 @@ func (s *MihomoAccountService) UpdateCredential(ctx context.Context, req *v1.Upd
 	if err != nil {
 		return nil, err
 	}
-	if err := validateScopedPlatformAccountID(claims, req.GetPlatformAccountId()); err != nil {
-		return nil, err
-	}
-	if err := requireScopes(claims, "mihomo.credential.update"); err != nil {
-		return nil, err
+	if _, err := scopedGuardForPlatformAccount(claims, req.GetPlatformAccountId(), usecase.ActionCredentialUpdate); err != nil {
+		return nil, mapUsecaseError(err)
 	}
 	if req.GetDevice() == nil {
 		return nil, status.Error(codes.InvalidArgument, "device is required")
@@ -240,9 +244,9 @@ func (s *MihomoAccountService) UpdateCredential(ctx context.Context, req *v1.Upd
 	input := usecase.UpdateCredentialInput{
 		PlatformAccountID: req.GetPlatformAccountId(),
 		BindCredentialInput: usecase.BindCredentialInput{
-			PlatformAccountRefID: claims.PlatformAccountRefID,
-			CookieBundleJSON:     req.GetCookieBundleJson(),
-			RegionHint:           req.GetRegionHint(),
+			BindingID:        claims.BindingID,
+			CookieBundleJSON: req.GetCookieBundleJson(),
+			RegionHint:       req.GetRegionHint(),
 		},
 	}
 	if device != nil {
@@ -268,11 +272,8 @@ func (s *MihomoAccountService) DeleteCredential(ctx context.Context, req *v1.Del
 	if err != nil {
 		return nil, err
 	}
-	if err := validateScopedPlatformAccountID(claims, req.GetPlatformAccountId()); err != nil {
-		return nil, err
-	}
-	if err := requireScopes(claims, "mihomo.credential.delete"); err != nil {
-		return nil, err
+	if _, err := scopedGuardForPlatformAccount(claims, req.GetPlatformAccountId(), usecase.ActionCredentialDelete); err != nil {
+		return nil, mapUsecaseError(err)
 	}
 
 	if err := s.managementUC.DeleteCredential(ctx, req.GetPlatformAccountId()); err != nil {
@@ -290,8 +291,8 @@ func (s *MihomoAccountService) UpsertDevice(ctx context.Context, req *v1.UpsertD
 	if err != nil {
 		return nil, err
 	}
-	if err := validateScopedPlatformAccountID(claims, req.GetPlatformAccountId()); err != nil {
-		return nil, err
+	if _, err := scopedGuardForPlatformAccount(claims, req.GetPlatformAccountId(), usecase.ActionDeviceUpdate); err != nil {
+		return nil, mapUsecaseError(err)
 	}
 	device := req.GetDevice()
 	if device == nil {
@@ -311,10 +312,11 @@ func (s *MihomoAccountService) ConfirmPrimaryProfile(ctx context.Context, req *v
 	if err != nil {
 		return nil, err
 	}
-	if err := validateScopedPlatformAccountID(claims, req.GetPlatformAccountId()); err != nil {
-		return nil, err
+	guard, err := scopedGuardForPlatformAccount(claims, req.GetPlatformAccountId(), usecase.ActionProfileWrite)
+	if err != nil {
+		return nil, mapUsecaseError(err)
 	}
-	profile, err := s.profileUC.ConfirmPrimaryProfile(ctx, req.GetPlatformAccountId(), req.GetPlayerId())
+	profile, err := s.profileUC.ConfirmPrimaryProfileWithScope(ctx, guard, req.GetPlatformAccountId(), req.GetPlayerId())
 	if err != nil {
 		return nil, mapUsecaseError(err)
 	}
@@ -340,36 +342,38 @@ func mapUsecaseError(err error) error {
 	if errors.Is(err, usecase.ErrPlatformAccountMismatch) {
 		return status.Error(codes.InvalidArgument, err.Error())
 	}
+	if errors.Is(err, usecase.ErrActionScopeDenied) || errors.Is(err, usecase.ErrBindingScopeDenied) || errors.Is(err, usecase.ErrProfileScopeDenied) {
+		return status.Error(codes.PermissionDenied, err.Error())
+	}
 
 	return status.Error(codes.Internal, err.Error())
 }
 
-func validateScopedPlatformAccountID(claims *biz.ServiceTicketClaims, platformAccountID string) error {
-	if claims.Platform != "mihomo" {
-		return status.Error(codes.PermissionDenied, "platform is outside ticket scope")
+func scopedGuardForPlatformAccount(claims *biz.ServiceTicketClaims, platformAccountID string, requiredActions ...string) (usecase.ScopeGuard, error) {
+	guard, err := toScopeGuard(claims)
+	if err != nil {
+		return usecase.ScopeGuard{}, err
 	}
-	if claims.PlatformAccountID == "" {
-		return status.Error(codes.PermissionDenied, "platform account is outside ticket scope")
-	}
-	if claims.PlatformAccountID != platformAccountID {
-		return status.Error(codes.PermissionDenied, "platform account is outside ticket scope")
-	}
-	expectedPrefix := fmt.Sprintf("hoyo_ref_%d_", claims.PlatformAccountRefID)
-	if !strings.HasPrefix(platformAccountID, expectedPrefix) {
-		return status.Error(codes.PermissionDenied, "platform account is outside ticket scope")
-	}
-	return nil
-}
-
-func requireScopes(claims *biz.ServiceTicketClaims, required ...string) error {
-	granted := make(map[string]struct{}, len(claims.Scopes))
-	for _, scope := range claims.Scopes {
-		granted[scope] = struct{}{}
-	}
-	for _, scope := range required {
-		if _, ok := granted[scope]; !ok {
-			return status.Error(codes.PermissionDenied, "scope is not granted")
+	for _, action := range requiredActions {
+		if err := guard.RequireAction(action); err != nil {
+			return usecase.ScopeGuard{}, err
 		}
 	}
-	return nil
+	if err := guard.RequirePlatformAccountID(platformAccountID); err != nil {
+		return usecase.ScopeGuard{}, err
+	}
+	return guard, nil
+}
+
+func scopedGuard(claims *biz.ServiceTicketClaims, requiredActions ...string) (usecase.ScopeGuard, error) {
+	guard, err := toScopeGuard(claims)
+	if err != nil {
+		return usecase.ScopeGuard{}, err
+	}
+	for _, action := range requiredActions {
+		if err := guard.RequireAction(action); err != nil {
+			return usecase.ScopeGuard{}, err
+		}
+	}
+	return guard, nil
 }

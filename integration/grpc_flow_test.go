@@ -212,15 +212,18 @@ func testTicketForAccount(t *testing.T, platformAccountID string, scopes ...stri
 	t.Helper()
 
 	claims := jwt.MapClaims{
-		"iss":                     integrationTicketIssuer,
-		"aud":                     []string{integrationTicketAudience},
-		"bot_id":                  "bot-paigram",
-		"user_id":                 float64(1),
-		"platform_account_ref_id": float64(101),
-		"exp":                     time.Now().Add(time.Minute).Unix(),
+		"iss":           integrationTicketIssuer,
+		"aud":           []string{integrationTicketAudience},
+		"actor_type":    "bot",
+		"actor_id":      "bot-paigram",
+		"owner_user_id": float64(1),
+		"binding_id":    float64(101),
+		"bot_id":        "bot-paigram",
+		"platform":      "mihomo",
+		"user_id":       float64(1),
+		"exp":           time.Now().Add(time.Minute).Unix(),
 	}
 	if platformAccountID != "" {
-		claims["platform"] = "mihomo"
 		claims["platform_account_id"] = platformAccountID
 	}
 	if len(scopes) > 0 {

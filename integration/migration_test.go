@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/go-sql-driver/mysql"
@@ -36,6 +37,40 @@ func TestMigrationsCreateCoreTables(t *testing.T) {
 	requireTableExists(t, stack.SQLDB, stack.DatabaseCfg.Dbname, "device_records")
 	requireTableExists(t, stack.SQLDB, stack.DatabaseCfg.Dbname, "account_profiles")
 	requireTableExists(t, stack.SQLDB, stack.DatabaseCfg.Dbname, "runtime_artifacts")
+}
+
+func TestBindingMigrationRejectsUnknownLegacyPlatformAccountIDs(t *testing.T) {
+	stack := newIntegrationStack(t)
+	t.Cleanup(stack.cleanup)
+
+	applyMigrationFile(t, stack.SQLDB, migrationPath(t, "000001_create_credential_records.up.sql"))
+	applyMigrationFile(t, stack.SQLDB, migrationPath(t, "000003_create_account_profiles.up.sql"))
+
+	_, err := stack.SQLDB.Exec(`
+		INSERT INTO credential_records (
+			platform_account_id, platform, account_id, region, credential_blob, credential_version, status
+		) VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, "legacy_10001", "mihomo", "10001", "cn_gf01", "{}", "v1", "active")
+	if err != nil {
+		t.Fatalf("insert legacy credential row: %v", err)
+	}
+
+	_, err = stack.SQLDB.Exec(`
+		INSERT INTO account_profiles (
+			platform_account_id, game_biz, region, player_id, nickname, level, is_default
+		) VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, "legacy_10001", "hk4e_cn", "cn_gf01", "1008611", "Traveler", 1, true)
+	if err != nil {
+		t.Fatalf("insert legacy profile row: %v", err)
+	}
+
+	err = execMigrationFile(stack.SQLDB, migrationPath(t, "000005_add_binding_id_to_credentials_and_profiles.up.sql"))
+	if err == nil {
+		t.Fatal("expected binding migration to fail for unknown legacy platform_account_id")
+	}
+	if !strings.Contains(err.Error(), "binding_id") {
+		t.Fatalf("expected binding migration error to mention binding_id, got: %v", err)
+	}
 }
 
 func newIntegrationStack(t *testing.T) *integrationStack {
@@ -153,14 +188,33 @@ func requireMigrationsApplied(t *testing.T, db *sql.DB) {
 	sort.Strings(files)
 
 	for _, path := range files {
-		statement, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("read migration %q: %v", path, err)
-		}
-		if _, err := db.Exec(string(statement)); err != nil {
+		if err := execMigrationFile(db, path); err != nil {
 			t.Fatalf("apply migration %q: %v", path, err)
 		}
 	}
+}
+
+func migrationPath(t *testing.T, name string) string {
+	t.Helper()
+	return filepath.Join(repoRoot(t), "initialize", "migrate", "sql", name)
+}
+
+func applyMigrationFile(t *testing.T, db *sql.DB, path string) {
+	t.Helper()
+	if err := execMigrationFile(db, path); err != nil {
+		t.Fatalf("apply migration %q: %v", path, err)
+	}
+}
+
+func execMigrationFile(db *sql.DB, path string) error {
+	statement, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read migration %q: %w", path, err)
+	}
+	if _, err := db.Exec(string(statement)); err != nil {
+		return err
+	}
+	return nil
 }
 
 func requireTableExists(t *testing.T, db *sql.DB, schema string, table string) {

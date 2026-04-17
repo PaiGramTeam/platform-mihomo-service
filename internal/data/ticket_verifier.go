@@ -17,13 +17,18 @@ type serviceTicketJWTClaims struct {
 	ActorType            string   `json:"actor_type"`
 	ActorID              string   `json:"actor_id"`
 	OwnerUserID          uint64   `json:"owner_user_id"`
+	BindingID            uint64   `json:"binding_id"`
+	Platform             string   `json:"platform"`
+	PlatformAccountID    string   `json:"platform_account_id"`
+	Consumer             string   `json:"consumer"`
+	ProfileID            uint64   `json:"profile_id"`
+	Scopes               []string `json:"scopes"`
+	AllowedActions       []string `json:"allowed_actions"`
+	Audience             string   `json:"audience"`
 	BotID                string   `json:"bot_id"`
 	UserID               uint64   `json:"user_id"`
-	Platform             string   `json:"platform"`
 	PlatformServiceKey   string   `json:"platform_service_key"`
-	PlatformAccountID    string   `json:"platform_account_id"`
 	PlatformAccountRefID uint64   `json:"platform_account_ref_id"`
-	Scopes               []string `json:"scopes"`
 	jwt.RegisteredClaims
 }
 
@@ -55,28 +60,43 @@ func (v *TicketVerifier) Verify(raw string, expectedAudience string) (*biz.Servi
 	if claims.OwnerUserID == 0 {
 		return nil, fmt.Errorf("service ticket missing owner_user_id")
 	}
-	if claims.PlatformAccountRefID == 0 {
-		return nil, fmt.Errorf("service ticket missing platform_account_ref_id")
+	if claims.BindingID == 0 {
+		return nil, fmt.Errorf("service ticket missing binding_id")
+	}
+	if claims.PlatformAccountRefID != 0 && claims.PlatformAccountRefID != claims.BindingID {
+		return nil, fmt.Errorf("service ticket binding_id does not match platform_account_ref_id")
 	}
 	if claims.Platform == "" {
 		return nil, fmt.Errorf("service ticket missing platform")
+	}
+	if claims.ActorType == "consumer" && claims.Consumer == "" {
+		return nil, fmt.Errorf("service ticket missing consumer")
 	}
 	userID := claims.OwnerUserID
 	if claims.UserID != 0 {
 		userID = claims.UserID
 	}
+	actions := claims.Scopes
+	if len(claims.AllowedActions) > 0 {
+		actions = claims.AllowedActions
+	}
 
 	return &biz.ServiceTicketClaims{
-		ActorType:            claims.ActorType,
-		ActorID:              claims.ActorID,
-		OwnerUserID:          claims.OwnerUserID,
-		BotID:                claims.BotID,
-		UserID:               userID,
-		Platform:             claims.Platform,
-		PlatformServiceKey:   claims.PlatformServiceKey,
-		PlatformAccountID:    claims.PlatformAccountID,
-		PlatformAccountRefID: claims.PlatformAccountRefID,
-		Scopes:               claims.Scopes,
-		Audience:             expectedAudience,
+		ActorType:          claims.ActorType,
+		ActorID:            claims.ActorID,
+		OwnerUserID:        claims.OwnerUserID,
+		BindingID:          claims.BindingID,
+		Platform:           claims.Platform,
+		PlatformAccountID:  claims.PlatformAccountID,
+		Consumer:           claims.Consumer,
+		ProfileID:          claims.ProfileID,
+		Scopes:             actions,
+		Audience:           expectedAudience,
+		BotID:              claims.BotID,
+		UserID:             userID,
+		PlatformServiceKey: claims.PlatformServiceKey,
+		// Keep the legacy alias available to downstream code while requiring
+		// any ticket-level platform_account_ref_id claim to match binding_id.
+		PlatformAccountRefID: claims.BindingID,
 	}, nil
 }

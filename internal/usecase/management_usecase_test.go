@@ -34,12 +34,12 @@ func TestUpdateCredentialReturnsUpdatedSummary(t *testing.T) {
 	summary, err := uc.UpdateCredential(context.Background(), UpdateCredentialInput{
 		PlatformAccountID: platformAccountID,
 		BindCredentialInput: BindCredentialInput{
-			PlatformAccountRefID: 101,
-			CookieBundleJSON:     `{"account_id":"10001","cookie_token":"updated"}`,
-			DeviceID:             "device-2",
-			DeviceFP:             "fp-2",
-			DeviceName:           "iPad",
-			RegionHint:           "cn_gf01",
+			BindingID:        101,
+			CookieBundleJSON: `{"account_id":"10001","cookie_token":"updated"}`,
+			DeviceID:         "device-2",
+			DeviceFP:         "fp-2",
+			DeviceName:       "iPad",
+			RegionHint:       "cn_gf01",
 		},
 	})
 	require.NoError(t, err)
@@ -57,15 +57,15 @@ func TestUpdateCredentialRejectsPlatformAccountMismatch(t *testing.T) {
 	_, err := uc.UpdateCredential(context.Background(), UpdateCredentialInput{
 		PlatformAccountID: platformAccountID,
 		BindCredentialInput: BindCredentialInput{
-			PlatformAccountRefID: 101,
-			CookieBundleJSON:     `{"account_id":"20002","cookie_token":"updated"}`,
-			DeviceID:             "device-3",
-			DeviceFP:             "fp-3",
-			DeviceName:           "iPad",
+			BindingID:        101,
+			CookieBundleJSON: `{"account_id":"20002","cookie_token":"updated"}`,
+			DeviceID:         "device-3",
+			DeviceFP:         "fp-3",
+			DeviceName:       "iPad",
 		},
 	})
 	require.ErrorIs(t, err, ErrPlatformAccountMismatch)
-	require.Nil(t, uc.credentialRepo.byPlatformAccountID["hoyo_ref_101_20002"])
+	require.Nil(t, uc.credentialRepo.byPlatformAccountID["binding_101_20002"])
 }
 
 func TestUpdateCredentialRemovesStaleProfiles(t *testing.T) {
@@ -76,11 +76,11 @@ func TestUpdateCredentialRemovesStaleProfiles(t *testing.T) {
 	summary, err := uc.UpdateCredential(context.Background(), UpdateCredentialInput{
 		PlatformAccountID: platformAccountID,
 		BindCredentialInput: BindCredentialInput{
-			PlatformAccountRefID: 101,
-			CookieBundleJSON:     `{"account_id":"10001","cookie_token":"updated"}`,
-			DeviceID:             "device-4",
-			DeviceFP:             "fp-4",
-			DeviceName:           "switch-device",
+			BindingID:        101,
+			CookieBundleJSON: `{"account_id":"10001","cookie_token":"updated"}`,
+			DeviceID:         "device-4",
+			DeviceFP:         "fp-4",
+			DeviceName:       "switch-device",
 		},
 	})
 	require.NoError(t, err)
@@ -162,11 +162,11 @@ func bindCredentialForManagementTest(t *testing.T, uc *managementUsecaseTestHarn
 	t.Helper()
 
 	resp, err := uc.bindUC.BindCredential(context.Background(), BindCredentialInput{
-		PlatformAccountRefID: 101,
-		CookieBundleJSON:     `{"account_id":"10001","cookie_token":"abc"}`,
-		DeviceID:             "12345678-1234-1234-1234-123456789abc",
-		DeviceFP:             "abcdefghijklmn",
-		DeviceName:           "iPhone",
+		BindingID:        101,
+		CookieBundleJSON: `{"account_id":"10001","cookie_token":"abc"}`,
+		DeviceID:         "12345678-1234-1234-1234-123456789abc",
+		DeviceFP:         "abcdefghijklmn",
+		DeviceName:       "iPhone",
 	})
 	require.NoError(t, err)
 	return resp.PlatformAccountID

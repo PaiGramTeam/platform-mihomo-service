@@ -19,18 +19,18 @@ import (
 func TestVerifyServiceTicketAcceptsExpectedClaims(t *testing.T) {
 	verifier := data.NewTicketVerifier("paigram-account-center", []byte("0123456789abcdef0123456789abcdef"))
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"iss":                     "paigram-account-center",
-		"aud":                     []string{"platform-mihomo-service"},
-		"actor_type":              "bot",
-		"actor_id":                "bot-paigram",
-		"owner_user_id":           float64(1),
-		"bot_id":                  "bot-paigram",
-		"platform":                "mihomo",
-		"platform_service_key":    "platform-mihomo-service",
-		"platform_account_id":     "hoyo_ref_101_10001",
-		"platform_account_ref_id": float64(101),
-		"scopes":                  []string{"mihomo.status.read"},
-		"exp":                     time.Now().Add(time.Minute).Unix(),
+		"iss":                  "paigram-account-center",
+		"aud":                  []string{"platform-mihomo-service"},
+		"actor_type":           "bot",
+		"actor_id":             "bot-paigram",
+		"owner_user_id":        float64(1),
+		"binding_id":           float64(101),
+		"bot_id":               "bot-paigram",
+		"platform":             "mihomo",
+		"platform_service_key": "platform-mihomo-service",
+		"platform_account_id":  "binding_101_10001",
+		"scopes":               []string{"mihomo.status.read"},
+		"exp":                  time.Now().Add(time.Minute).Unix(),
 	})
 
 	signed, err := token.SignedString([]byte("0123456789abcdef0123456789abcdef"))
@@ -42,9 +42,10 @@ func TestVerifyServiceTicketAcceptsExpectedClaims(t *testing.T) {
 	require.Equal(t, "bot", claims.ActorType)
 	require.Equal(t, "bot-paigram", claims.ActorID)
 	require.Equal(t, uint64(1), claims.OwnerUserID)
+	require.Equal(t, uint64(101), claims.BindingID)
 	require.Equal(t, "mihomo", claims.Platform)
 	require.Equal(t, "platform-mihomo-service", claims.PlatformServiceKey)
-	require.Equal(t, "hoyo_ref_101_10001", claims.PlatformAccountID)
+	require.Equal(t, "binding_101_10001", claims.PlatformAccountID)
 	require.Equal(t, []string{"mihomo.status.read"}, claims.Scopes)
 }
 

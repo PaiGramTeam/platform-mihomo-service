@@ -3,7 +3,6 @@ package usecase
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
 	v1 "platform-mihomo-service/api/mihomo/v1"
@@ -13,15 +12,16 @@ import (
 )
 
 type BindCredentialInput struct {
-	PlatformAccountRefID uint64
-	CookieBundleJSON     string
-	DeviceID             string
-	DeviceFP             string
-	DeviceName           string
-	RegionHint           string
+	BindingID        uint64
+	CookieBundleJSON string
+	DeviceID         string
+	DeviceFP         string
+	DeviceName       string
+	RegionHint       string
 }
 
 type BindCredentialOutput struct {
+	BindingID         uint64
 	PlatformAccountID string
 	Profiles          []v1.ProfileSummary
 	Status            v1.CredentialStatus
@@ -52,8 +52,8 @@ func NewBindUsecase(
 }
 
 func (uc *BindUsecase) BindCredential(ctx context.Context, input BindCredentialInput) (*BindCredentialOutput, error) {
-	if input.PlatformAccountRefID == 0 {
-		return nil, errors.New("platform account ref id is required")
+	if input.BindingID == 0 {
+		return nil, errors.New("binding id is required")
 	}
 
 	accountID, region, discoveredProfiles, err := uc.client.ValidateAndDiscover(ctx, input.CookieBundleJSON, input.RegionHint)
@@ -61,7 +61,7 @@ func (uc *BindUsecase) BindCredential(ctx context.Context, input BindCredentialI
 		return nil, err
 	}
 
-	platformAccountID := formatPlatformAccountID(input.PlatformAccountRefID, accountID)
+	platformAccountID := FormatPlatformAccountID(input.BindingID, accountID)
 	encryptedBlob, err := internalcrypto.EncryptString(uc.encryptionKey, input.CookieBundleJSON)
 	if err != nil {
 		return nil, err
@@ -69,6 +69,7 @@ func (uc *BindUsecase) BindCredential(ctx context.Context, input BindCredentialI
 
 	now := time.Now().UTC()
 	if err := uc.credentialRepo.Save(ctx, &biz.Credential{
+		BindingID:         input.BindingID,
 		PlatformAccountID: platformAccountID,
 		Platform:          "mihomo",
 		AccountID:         accountID,
@@ -107,6 +108,7 @@ func (uc *BindUsecase) BindCredential(ctx context.Context, input BindCredentialI
 	outputProfiles := make([]v1.ProfileSummary, 0, len(discoveredProfiles))
 	for index, discoveredProfile := range discoveredProfiles {
 		profile := &biz.Profile{
+			BindingID:         input.BindingID,
 			PlatformAccountID: platformAccountID,
 			GameBiz:           discoveredProfile.GameBiz,
 			Region:            discoveredProfile.Region,
@@ -126,6 +128,7 @@ func (uc *BindUsecase) BindCredential(ctx context.Context, input BindCredentialI
 	rollback = false
 
 	return &BindCredentialOutput{
+		BindingID:         input.BindingID,
 		PlatformAccountID: platformAccountID,
 		Profiles:          outputProfiles,
 		Status:            v1.CredentialStatus_CREDENTIAL_STATUS_ACTIVE,
@@ -154,8 +157,4 @@ func (uc *BindUsecase) UpsertDevice(ctx context.Context, platformAccountID strin
 	now := time.Now().UTC()
 	device.LastSeenAt = &now
 	return uc.deviceRepo.Save(ctx, device)
-}
-
-func formatPlatformAccountID(platformAccountRefID uint64, accountID string) string {
-	return fmt.Sprintf("hoyo_ref_%d_%s", platformAccountRefID, accountID)
 }

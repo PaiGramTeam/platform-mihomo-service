@@ -21,6 +21,7 @@ func NewCredentialRepo(db *gorm.DB) *CredentialRepo {
 
 func (r *CredentialRepo) Save(ctx context.Context, credential *biz.Credential) error {
 	record := model.CredentialRecord{
+		BindingID:         credential.BindingID,
 		PlatformAccountID: credential.PlatformAccountID,
 		Platform:          credential.Platform,
 		AccountID:         credential.AccountID,
@@ -34,9 +35,21 @@ func (r *CredentialRepo) Save(ctx context.Context, credential *biz.Credential) e
 	}
 
 	return r.db.WithContext(ctx).Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "platform_account_id"}},
+		Columns:   []clause.Column{{Name: "binding_id"}},
 		UpdateAll: true,
 	}).Create(&record).Error
+}
+
+func (r *CredentialRepo) GetByBindingID(ctx context.Context, bindingID uint64) (*biz.Credential, error) {
+	var record model.CredentialRecord
+	if err := r.db.WithContext(ctx).Where("binding_id = ?", bindingID).Order("id asc").Take(&record).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	return credentialFromRecord(record), nil
 }
 
 func (r *CredentialRepo) GetByPlatformAccountID(ctx context.Context, platformAccountID string) (*biz.Credential, error) {
@@ -48,7 +61,16 @@ func (r *CredentialRepo) GetByPlatformAccountID(ctx context.Context, platformAcc
 		return nil, err
 	}
 
+	return credentialFromRecord(record), nil
+}
+
+func (r *CredentialRepo) DeleteByPlatformAccountID(ctx context.Context, platformAccountID string) error {
+	return r.db.WithContext(ctx).Where("platform_account_id = ?", platformAccountID).Delete(&model.CredentialRecord{}).Error
+}
+
+func credentialFromRecord(record model.CredentialRecord) *biz.Credential {
 	return &biz.Credential{
+		BindingID:         record.BindingID,
 		PlatformAccountID: record.PlatformAccountID,
 		Platform:          record.Platform,
 		AccountID:         record.AccountID,
@@ -59,9 +81,5 @@ func (r *CredentialRepo) GetByPlatformAccountID(ctx context.Context, platformAcc
 		LastValidatedAt:   record.LastValidatedAt,
 		LastRefreshedAt:   record.LastRefreshedAt,
 		ExpiresAt:         record.ExpiresAt,
-	}, nil
-}
-
-func (r *CredentialRepo) DeleteByPlatformAccountID(ctx context.Context, platformAccountID string) error {
-	return r.db.WithContext(ctx).Where("platform_account_id = ?", platformAccountID).Delete(&model.CredentialRecord{}).Error
+	}
 }

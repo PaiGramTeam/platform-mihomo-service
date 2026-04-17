@@ -12,9 +12,9 @@ import (
 
 func toBindCredentialInput(req *v1.BindCredentialRequest, claims *biz.ServiceTicketClaims) usecase.BindCredentialInput {
 	input := usecase.BindCredentialInput{
-		PlatformAccountRefID: claims.PlatformAccountRefID,
-		CookieBundleJSON:     req.GetCookieBundleJson(),
-		RegionHint:           req.GetRegionHint(),
+		BindingID:        claims.BindingID,
+		CookieBundleJSON: req.GetCookieBundleJson(),
+		RegionHint:       req.GetRegionHint(),
 	}
 
 	if device := req.GetDevice(); device != nil {
@@ -24,6 +24,23 @@ func toBindCredentialInput(req *v1.BindCredentialRequest, claims *biz.ServiceTic
 	}
 
 	return input
+}
+
+func toScopeGuard(claims *biz.ServiceTicketClaims) (usecase.ScopeGuard, error) {
+	if claims.Platform != "mihomo" {
+		return usecase.ScopeGuard{}, usecase.ErrBindingScopeDenied
+	}
+
+	allowedActions := make(map[string]struct{}, len(claims.Scopes))
+	for _, scope := range claims.Scopes {
+		allowedActions[scope] = struct{}{}
+	}
+
+	return usecase.ScopeGuard{
+		AllowedActions: allowedActions,
+		BindingID:      claims.BindingID,
+		ProfileID:      claims.ProfileID,
+	}, nil
 }
 
 func toBindCredentialResponse(output *usecase.BindCredentialOutput) *v1.BindCredentialResponse {

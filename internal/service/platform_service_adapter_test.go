@@ -40,11 +40,11 @@ func TestGenericPlatformServiceGetCredentialSummary(t *testing.T) {
 	)
 
 	bindResp, err := bindUC.BindCredential(context.Background(), usecase.BindCredentialInput{
-		PlatformAccountRefID: 101,
-		CookieBundleJSON:     `{"account_id":"10001","cookie_token":"abc"}`,
-		DeviceID:             "12345678-1234-1234-1234-123456789abc",
-		DeviceFP:             "abcdefghijklmn",
-		DeviceName:           "iPhone",
+		BindingID:        101,
+		CookieBundleJSON: `{"account_id":"10001","cookie_token":"abc"}`,
+		DeviceID:         "12345678-1234-1234-1234-123456789abc",
+		DeviceFP:         "abcdefghijklmn",
+		DeviceName:       "iPhone",
 	})
 	require.NoError(t, err)
 
@@ -56,6 +56,45 @@ func TestGenericPlatformServiceGetCredentialSummary(t *testing.T) {
 	require.Equal(t, bindResp.PlatformAccountID, resp.PlatformAccountId)
 	require.NotEmpty(t, resp.Profiles)
 	require.NotEmpty(t, resp.Devices)
+}
+
+func TestGenericPlatformServiceRejectsMissingSummaryScope(t *testing.T) {
+	credentialRepo := newMemoryCredentialRepo()
+	deviceRepo := newMemoryDeviceRepo()
+	profileRepo := newMemoryProfileRepo()
+	artifactRepo := newMemoryArtifactRepo()
+	client := platformmihomo.StubClient{}
+
+	bindUC := usecase.NewBindUsecase(credentialRepo, deviceRepo, profileRepo, client, serviceTestSigningKey)
+	profileUC := usecase.NewProfileUsecase(profileRepo)
+	managementUC := usecase.NewManagementUsecase(
+		credentialRepo,
+		deviceRepo,
+		profileRepo,
+		artifactRepo,
+		newMemoryManagementRepo(credentialRepo, deviceRepo, profileRepo, artifactRepo),
+		bindUC,
+		profileUC,
+	)
+	adapter := NewGenericPlatformService(
+		data.NewTicketVerifier(serviceTestIssuer, serviceTestSigningKey),
+		managementUC,
+	)
+
+	bindResp, err := bindUC.BindCredential(context.Background(), usecase.BindCredentialInput{
+		BindingID:        101,
+		CookieBundleJSON: `{"account_id":"10001","cookie_token":"abc"}`,
+		DeviceID:         "12345678-1234-1234-1234-123456789abc",
+		DeviceFP:         "abcdefghijklmn",
+		DeviceName:       "iPhone",
+	})
+	require.NoError(t, err)
+
+	_, err = adapter.GetCredentialSummary(context.Background(), &platformv1.GetCredentialSummaryRequest{
+		ServiceTicket:     signedMihomoSummaryTicket(t, bindResp.PlatformAccountID),
+		PlatformAccountId: bindResp.PlatformAccountID,
+	})
+	require.Error(t, err)
 }
 
 func TestGenericPlatformServiceDescribePlatform(t *testing.T) {
