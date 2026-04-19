@@ -74,7 +74,7 @@ func main() {
 		managementUC,
 	)
 	sharedSvc := service.NewMihomoCredentialService(ticketVerifier, managementUC)
-	genericSvc := service.NewGenericPlatformService(ticketVerifier, managementUC)
+	genericSvc := service.NewGenericPlatformService(ticketVerifier, bindUC, statusUC, managementUC)
 
 	grpcSrv := server.NewGRPCServer(&bc, mihomoSvc, sharedSvc, genericSvc)
 	app := kratos.New(

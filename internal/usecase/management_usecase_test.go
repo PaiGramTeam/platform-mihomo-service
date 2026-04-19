@@ -53,8 +53,14 @@ func TestUpdateCredentialRejectsPlatformAccountMismatch(t *testing.T) {
 	uc := newManagementUsecaseForTest(t)
 	platformAccountID := bindCredentialForManagementTest(t, uc)
 	uc.bindUC = NewBindUsecase(uc.credentialRepo, uc.deviceRepo, uc.profileRepo, mismatchClient{}, testEncryptionKey)
+	originalCredential, err := uc.credentialRepo.GetByPlatformAccountID(context.Background(), platformAccountID)
+	require.NoError(t, err)
+	originalDevices, err := uc.deviceRepo.ListByPlatformAccountID(context.Background(), platformAccountID)
+	require.NoError(t, err)
+	originalProfiles, err := uc.profileRepo.ListByPlatformAccountID(context.Background(), platformAccountID)
+	require.NoError(t, err)
 
-	_, err := uc.UpdateCredential(context.Background(), UpdateCredentialInput{
+	_, err = uc.UpdateCredential(context.Background(), UpdateCredentialInput{
 		PlatformAccountID: platformAccountID,
 		BindCredentialInput: BindCredentialInput{
 			BindingID:        101,
@@ -65,6 +71,20 @@ func TestUpdateCredentialRejectsPlatformAccountMismatch(t *testing.T) {
 		},
 	})
 	require.ErrorIs(t, err, ErrPlatformAccountMismatch)
+	require.Zero(t, uc.managementRepo.deleteCalls)
+	currentCredential, err := uc.credentialRepo.GetByPlatformAccountID(context.Background(), platformAccountID)
+	require.NoError(t, err)
+	require.NotNil(t, currentCredential)
+	require.Equal(t, originalCredential.PlatformAccountID, currentCredential.PlatformAccountID)
+	require.Equal(t, originalCredential.AccountID, currentCredential.AccountID)
+	currentDevices, err := uc.deviceRepo.ListByPlatformAccountID(context.Background(), platformAccountID)
+	require.NoError(t, err)
+	require.Len(t, currentDevices, len(originalDevices))
+	require.Equal(t, originalDevices[0].DeviceID, currentDevices[0].DeviceID)
+	currentProfiles, err := uc.profileRepo.ListByPlatformAccountID(context.Background(), platformAccountID)
+	require.NoError(t, err)
+	require.Len(t, currentProfiles, len(originalProfiles))
+	require.Equal(t, originalProfiles[0].PlayerID, currentProfiles[0].PlayerID)
 	require.Nil(t, uc.credentialRepo.byPlatformAccountID["binding_101_20002"])
 }
 
@@ -108,6 +128,56 @@ func TestDeleteCredentialRemovesCredentialArtifactsAndRelations(t *testing.T) {
 
 	_, err = uc.GetCredentialSummary(context.Background(), platformAccountID)
 	require.ErrorIs(t, err, ErrCredentialNotFound)
+}
+
+func TestGetCredentialSummaryWithScopeRejectsForeignBinding(t *testing.T) {
+	uc := newManagementUsecaseForTest(t)
+	platformAccountID := bindCredentialForManagementTest(t, uc)
+
+	_, err := uc.GetCredentialSummaryWithScope(context.Background(), ScopeGuard{BindingID: 999}, platformAccountID)
+	require.ErrorIs(t, err, ErrBindingScopeDenied)
+}
+
+func TestDeleteCredentialWithScopeRejectsForeignBinding(t *testing.T) {
+	uc := newManagementUsecaseForTest(t)
+	platformAccountID := bindCredentialForManagementTest(t, uc)
+
+	err := uc.DeleteCredentialWithScope(context.Background(), ScopeGuard{BindingID: 999}, platformAccountID)
+	require.ErrorIs(t, err, ErrBindingScopeDenied)
+}
+
+func TestGetCredentialSummaryWithScopeRejectsProfileScopedTicket(t *testing.T) {
+	uc := newManagementUsecaseForTest(t)
+	platformAccountID := bindCredentialForManagementTest(t, uc)
+
+	_, err := uc.GetCredentialSummaryWithScope(context.Background(), ScopeGuard{BindingID: 101, ProfileID: 1001}, platformAccountID)
+	require.ErrorIs(t, err, ErrProfileScopeDenied)
+}
+
+func TestUpdateCredentialWithScopeRejectsProfileScopedTicket(t *testing.T) {
+	uc := newManagementUsecaseForTest(t)
+	platformAccountID := bindCredentialForManagementTest(t, uc)
+
+	_, err := uc.UpdateCredentialWithScope(context.Background(), ScopeGuard{BindingID: 101, ProfileID: 1001}, UpdateCredentialInput{
+		PlatformAccountID: platformAccountID,
+		BindCredentialInput: BindCredentialInput{
+			BindingID:        101,
+			CookieBundleJSON: `{"account_id":"10001","cookie_token":"updated"}`,
+			DeviceID:         "device-2",
+			DeviceFP:         "fp-2",
+			DeviceName:       "iPad",
+			RegionHint:       "cn_gf01",
+		},
+	})
+	require.ErrorIs(t, err, ErrProfileScopeDenied)
+}
+
+func TestDeleteCredentialWithScopeRejectsProfileScopedTicket(t *testing.T) {
+	uc := newManagementUsecaseForTest(t)
+	platformAccountID := bindCredentialForManagementTest(t, uc)
+
+	err := uc.DeleteCredentialWithScope(context.Background(), ScopeGuard{BindingID: 101, ProfileID: 1001}, platformAccountID)
+	require.ErrorIs(t, err, ErrProfileScopeDenied)
 }
 
 type managementUsecaseTestHarness struct {
@@ -177,9 +247,11 @@ type memoryManagementRepo struct {
 	deviceRepo     *memoryDeviceRepo
 	profileRepo    *memoryProfileRepo
 	artifactRepo   *memoryArtifactRepo
+	deleteCalls    int
 }
 
 func (r *memoryManagementRepo) DeleteCredentialGraph(_ context.Context, platformAccountID string) error {
+	r.deleteCalls++
 	requireDeleteArtifacts(r.artifactRepo, platformAccountID)
 	delete(r.credentialRepo.byPlatformAccountID, platformAccountID)
 	delete(r.deviceRepo.byPlatformAccountID, platformAccountID)

@@ -19,6 +19,12 @@ func NewCredentialRepo(db *gorm.DB) *CredentialRepo {
 	return &CredentialRepo{db: db}
 }
 
+func (r *CredentialRepo) WithinTransaction(ctx context.Context, fn func(context.Context) error) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return fn(withTx(ctx, tx))
+	})
+}
+
 func (r *CredentialRepo) Save(ctx context.Context, credential *biz.Credential) error {
 	record := model.CredentialRecord{
 		BindingID:         credential.BindingID,
@@ -34,7 +40,7 @@ func (r *CredentialRepo) Save(ctx context.Context, credential *biz.Credential) e
 		ExpiresAt:         credential.ExpiresAt,
 	}
 
-	return r.db.WithContext(ctx).Clauses(clause.OnConflict{
+	return dbFromContext(ctx, r.db).Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "binding_id"}},
 		UpdateAll: true,
 	}).Create(&record).Error
@@ -42,7 +48,7 @@ func (r *CredentialRepo) Save(ctx context.Context, credential *biz.Credential) e
 
 func (r *CredentialRepo) GetByBindingID(ctx context.Context, bindingID uint64) (*biz.Credential, error) {
 	var record model.CredentialRecord
-	if err := r.db.WithContext(ctx).Where("binding_id = ?", bindingID).Order("id asc").Take(&record).Error; err != nil {
+	if err := dbFromContext(ctx, r.db).Where("binding_id = ?", bindingID).Order("id asc").Take(&record).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
 		}
@@ -54,7 +60,7 @@ func (r *CredentialRepo) GetByBindingID(ctx context.Context, bindingID uint64) (
 
 func (r *CredentialRepo) GetByPlatformAccountID(ctx context.Context, platformAccountID string) (*biz.Credential, error) {
 	var record model.CredentialRecord
-	if err := r.db.WithContext(ctx).Where("platform_account_id = ?", platformAccountID).Take(&record).Error; err != nil {
+	if err := dbFromContext(ctx, r.db).Where("platform_account_id = ?", platformAccountID).Take(&record).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
 		}
@@ -65,7 +71,7 @@ func (r *CredentialRepo) GetByPlatformAccountID(ctx context.Context, platformAcc
 }
 
 func (r *CredentialRepo) DeleteByPlatformAccountID(ctx context.Context, platformAccountID string) error {
-	return r.db.WithContext(ctx).Where("platform_account_id = ?", platformAccountID).Delete(&model.CredentialRecord{}).Error
+	return dbFromContext(ctx, r.db).Where("platform_account_id = ?", platformAccountID).Delete(&model.CredentialRecord{}).Error
 }
 
 func credentialFromRecord(record model.CredentialRecord) *biz.Credential {

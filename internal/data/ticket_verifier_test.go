@@ -111,6 +111,22 @@ func TestVerifyRejectsConsumerActorWithoutConsumerClaim(t *testing.T) {
 	require.ErrorContains(t, err, "consumer")
 }
 
+func TestVerifyAllowsNonConsumerActorTypesWithoutConsumerClaim(t *testing.T) {
+	verifier := NewTicketVerifier(testTicketIssuer, testTicketSigningKey)
+	raw := issueTestTicket(t, map[string]any{
+		"actor_type":    "robot",
+		"actor_id":      "user-1",
+		"owner_user_id": float64(1),
+		"binding_id":    float64(101),
+		"platform":      "mihomo",
+		"scopes":        []string{"mihomo.profile.read"},
+	})
+
+	claims, err := verifier.Verify(raw, testTicketAudience)
+	require.NoError(t, err)
+	require.Equal(t, "robot", claims.ActorType)
+}
+
 func TestVerifyRejectsMismatchedLegacyPlatformAccountRefID(t *testing.T) {
 	verifier := NewTicketVerifier(testTicketIssuer, testTicketSigningKey)
 	raw := issueTestTicket(t, map[string]any{

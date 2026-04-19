@@ -69,8 +69,10 @@ func (v *TicketVerifier) Verify(raw string, expectedAudience string) (*biz.Servi
 	if claims.Platform == "" {
 		return nil, fmt.Errorf("service ticket missing platform")
 	}
-	if claims.ActorType == "consumer" && claims.Consumer == "" {
-		return nil, fmt.Errorf("service ticket missing consumer")
+	if claims.ActorType == "consumer" {
+		if claims.Consumer == "" {
+			return nil, fmt.Errorf("service ticket missing consumer")
+		}
 	}
 	userID := claims.OwnerUserID
 	if claims.UserID != 0 {

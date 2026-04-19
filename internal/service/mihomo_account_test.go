@@ -67,7 +67,7 @@ func TestBindCredentialReturnsDiscoveredProfiles(t *testing.T) {
 	require.Empty(t, validateResp.ErrorCode)
 
 	refreshResp, err := svc.RefreshCredential(context.Background(), &v1.RefreshCredentialRequest{
-		ServiceTicket:     signedServiceTicketForAccount(t, bindResp.PlatformAccountId, "mihomo.status.read"),
+		ServiceTicket:     signedServiceTicketForAccount(t, bindResp.PlatformAccountId, "mihomo.credential.refresh"),
 		PlatformAccountId: bindResp.PlatformAccountId,
 	})
 	require.NoError(t, err)
@@ -167,6 +167,18 @@ func TestGetCredentialStatusRejectsOutOfScopePlatformAccountID(t *testing.T) {
 	require.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
+func TestRefreshCredentialRejectsProfileScopedTicket(t *testing.T) {
+	svc := newMihomoAccountServiceForTest(t)
+	bindResp := bindCredentialForServiceTest(t, svc)
+
+	_, err := svc.RefreshCredential(context.Background(), &v1.RefreshCredentialRequest{
+		ServiceTicket:     signedServiceTicketForProfile(t, bindResp.PlatformAccountId, 999, "mihomo.credential.refresh"),
+		PlatformAccountId: bindResp.PlatformAccountId,
+	})
+	require.Error(t, err)
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
 func TestConfirmPrimaryProfileRejectsUnknownPlayerID(t *testing.T) {
 	svc := newMihomoAccountServiceForTest(t)
 	bindResp, err := svc.BindCredential(context.Background(), &v1.BindCredentialRequest{
@@ -213,6 +225,18 @@ func TestDeleteCredentialRejectsMissingScope(t *testing.T) {
 	require.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
+func TestDeleteCredentialRejectsProfileScopedTicket(t *testing.T) {
+	svc := newMihomoAccountServiceForTest(t)
+	bindResp := bindCredentialForServiceTest(t, svc)
+
+	_, err := svc.DeleteCredential(context.Background(), &v1.DeleteCredentialRequest{
+		ServiceTicket:     signedServiceTicketForProfile(t, bindResp.PlatformAccountId, 999, "mihomo.credential.delete"),
+		PlatformAccountId: bindResp.PlatformAccountId,
+	})
+	require.Error(t, err)
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
 func TestBindCredentialRejectsMissingScope(t *testing.T) {
 	svc := newMihomoAccountServiceForTest(t)
 
@@ -237,12 +261,38 @@ func TestGetCredentialSummaryRejectsMissingScope(t *testing.T) {
 	require.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
+func TestGetCredentialSummaryRejectsProfileScopedTicket(t *testing.T) {
+	svc := newMihomoAccountServiceForTest(t)
+	bindResp := bindCredentialForServiceTest(t, svc)
+
+	_, err := svc.GetCredentialSummary(context.Background(), &v1.GetCredentialSummaryRequest{
+		ServiceTicket:     signedServiceTicketForProfile(t, bindResp.PlatformAccountId, 999, "mihomo.credential.read_meta"),
+		PlatformAccountId: bindResp.PlatformAccountId,
+	})
+	require.Error(t, err)
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
 func TestUpdateCredentialRejectsMissingScope(t *testing.T) {
 	svc := newMihomoAccountServiceForTest(t)
 	bindResp := bindCredentialForServiceTest(t, svc)
 
 	_, err := svc.UpdateCredential(context.Background(), &v1.UpdateCredentialRequest{
 		ServiceTicket:     signedServiceTicketForAccount(t, bindResp.PlatformAccountId),
+		PlatformAccountId: bindResp.PlatformAccountId,
+		CookieBundleJson:  `{"account_id":"10001","cookie_token":"updated"}`,
+		Device:            &v1.DeviceInfo{DeviceId: "device-2", DeviceFp: "fp-2", DeviceName: "iPad"},
+	})
+	require.Error(t, err)
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
+func TestUpdateCredentialRejectsProfileScopedTicket(t *testing.T) {
+	svc := newMihomoAccountServiceForTest(t)
+	bindResp := bindCredentialForServiceTest(t, svc)
+
+	_, err := svc.UpdateCredential(context.Background(), &v1.UpdateCredentialRequest{
+		ServiceTicket:     signedServiceTicketForProfile(t, bindResp.PlatformAccountId, 999, "mihomo.credential.update"),
 		PlatformAccountId: bindResp.PlatformAccountId,
 		CookieBundleJson:  `{"account_id":"10001","cookie_token":"updated"}`,
 		Device:            &v1.DeviceInfo{DeviceId: "device-2", DeviceFp: "fp-2", DeviceName: "iPad"},

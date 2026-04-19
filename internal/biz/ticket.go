@@ -4,6 +4,8 @@ type ServiceTicketClaims struct {
 	ActorType            string
 	ActorID              string
 	OwnerUserID          uint64
+	// BindingID is the first-class control-plane binding identity carried by
+	// service tickets and used for authorization and resource lookup.
 	BindingID            uint64
 	Platform             string
 	PlatformAccountID    string
@@ -16,8 +18,7 @@ type ServiceTicketClaims struct {
 	PlatformServiceKey   string
 	PlatformAccountRefID uint64
 
-	// PlatformAccountRefID is a read-only legacy alias for BindingID so
-	// downstream callers can migrate incrementally. New tickets should use
-	// BindingID; if a token still carries platform_account_ref_id, verifier
-	// code requires it to match binding_id.
+	// PlatformAccountRefID is a read-only legacy alias for BindingID. New
+	// tickets should use binding_id; if platform_account_ref_id is present,
+	// verifier code requires it to match BindingID exactly.
 }
