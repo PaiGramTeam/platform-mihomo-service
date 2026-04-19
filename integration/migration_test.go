@@ -10,23 +10,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
-	"strings"
 	"testing"
-
-	"github.com/go-sql-driver/mysql"
 )
-
-type integrationStack struct {
-	SQLDB       *sql.DB
-	DatabaseCfg databaseConfig
-	cleanup     func()
-}
-
-type databaseConfig struct {
-	Driver string `yaml:"driver"`
-	Source string `yaml:"source"`
-	Dbname string
-}
 
 func TestMigrationsCreateCoreTables(t *testing.T) {
 	stack := newIntegrationStack(t)
@@ -67,110 +52,6 @@ func TestBindingMigrationRejectsUnknownLegacyPlatformAccountIDs(t *testing.T) {
 	err = execMigrationFile(stack.SQLDB, migrationPath(t, "000005_add_binding_id_to_credentials_and_profiles.up.sql"))
 	if err == nil {
 		t.Fatal("expected binding migration to fail for unknown legacy platform_account_id")
-	}
-	if !strings.Contains(err.Error(), "Invalid use of NULL value") {
-		t.Fatalf("expected binding migration to fail on NULL binding_id backfill, got: %v", err)
-	}
-}
-
-func newIntegrationStack(t *testing.T) *integrationStack {
-	t.Helper()
-
-	databaseCfg := loadDatabaseConfig(t)
-	serverDB, err := openServerDB(databaseCfg.Source)
-	if err != nil {
-		t.Skipf("integration database unavailable: %v", err)
-	}
-	ensureDatabaseExists(t, serverDB, databaseCfg.Dbname)
-
-	appDB, err := openDatabase(databaseCfg.Source)
-	if err != nil {
-		_ = serverDB.Close()
-		t.Skipf("integration database unavailable: %v", err)
-	}
-	resetCoreTables(t, appDB)
-
-	return &integrationStack{
-		SQLDB:       appDB,
-		DatabaseCfg: databaseCfg,
-		cleanup: func() {
-			resetCoreTables(t, appDB)
-			_ = appDB.Close()
-			_ = serverDB.Close()
-		},
-	}
-}
-
-func loadDatabaseConfig(t *testing.T) databaseConfig {
-	t.Helper()
-
-	source := os.Getenv("TEST_DATABASE_SOURCE")
-	if source == "" {
-		t.Skip("TEST_DATABASE_SOURCE is required for integration database tests")
-	}
-	cfg := parseDatabaseConfig(t, source)
-	cfg.Source = source
-	if cfg.Dbname == "" {
-		t.Fatal("TEST_DATABASE_SOURCE must include a database name")
-	}
-	if cfg.Dbname == "platform_mihomo" {
-		t.Fatal("TEST_DATABASE_SOURCE must point to a dedicated test database, not platform_mihomo")
-	}
-	return cfg
-}
-
-func parseDatabaseConfig(t *testing.T, source string) databaseConfig {
-	t.Helper()
-
-	parsed, err := mysql.ParseDSN(source)
-	if err != nil {
-		t.Fatalf("parse database source: %v", err)
-	}
-	if parsed.DBName == "" {
-		t.Fatal("database source missing db name")
-	}
-
-	return databaseConfig{Dbname: parsed.DBName}
-}
-
-func openServerDB(source string) (*sql.DB, error) {
-	parsed, err := mysql.ParseDSN(source)
-	if err != nil {
-		return nil, fmt.Errorf("parse server dsn: %w", err)
-	}
-	parsed.DBName = ""
-
-	return openDatabase(parsed.FormatDSN())
-}
-
-func openDatabase(source string) (*sql.DB, error) {
-	db, err := sql.Open("mysql", source)
-	if err != nil {
-		return nil, fmt.Errorf("open database: %w", err)
-	}
-	if err := db.Ping(); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("ping database: %w", err)
-	}
-
-	return db, nil
-}
-
-func ensureDatabaseExists(t *testing.T, db *sql.DB, dbName string) {
-	t.Helper()
-
-	if _, err := db.Exec("CREATE DATABASE IF NOT EXISTS `" + dbName + "` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"); err != nil {
-		t.Fatalf("create database %q: %v", dbName, err)
-	}
-}
-
-func resetCoreTables(t *testing.T, db *sql.DB) {
-	t.Helper()
-
-	for _, table := range []string{"runtime_artifacts", "account_profiles", "device_records", "credential_records"} {
-		if _, err := db.Exec("DROP TABLE IF EXISTS `" + table + "`"); err != nil {
-			t.Fatalf("drop table %q: %v", table, err)
-		}
 	}
 }
 

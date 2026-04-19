@@ -43,8 +43,6 @@ jobs:
 
       - name: Run unit tests
         run: go test -covermode=atomic -coverprofile=coverage-unit.out ./...
-        env:
-          TEST_DATABASE_SOURCE: root:root@tcp(127.0.0.1:3306)/platform_mihomo_test?charset=utf8mb4&parseTime=True&loc=UTC&multiStatements=true
 
       - name: Upload unit coverage to Codecov
         uses: codecov/codecov-action@v5
@@ -92,7 +90,11 @@ jobs:
       - name: Run integration tests
         run: go test -tags=integration -covermode=atomic -coverprofile=coverage-integration.out ./integration/...
         env:
-          TEST_DATABASE_SOURCE: root:root@tcp(127.0.0.1:3306)/platform_mihomo_test?charset=utf8mb4&parseTime=True&loc=UTC&multiStatements=true
+          PAI_TEST_DATABASE_ADDR: 127.0.0.1:3306
+          PAI_TEST_DATABASE_USERNAME: root
+          PAI_TEST_DATABASE_PASSWORD: root
+          PAI_TEST_DATABASE_DBNAME: platform_mihomo_test
+          PAI_TEST_DATABASE_CONFIG: charset=utf8mb4&parseTime=True&loc=UTC&multiStatements=true
 
       - name: Upload integration coverage to Codecov
         uses: codecov/codecov-action@v5
