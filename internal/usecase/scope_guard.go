@@ -15,6 +15,7 @@ const (
 	ActionDeviceUpdate     = "mihomo.device.update"
 	ActionCredentialRead   = "mihomo.credential.read_meta"
 	ActionCredentialUpdate = "mihomo.credential.update"
+	ActionCredentialRefresh = "mihomo.credential.refresh"
 	ActionCredentialDelete = "mihomo.credential.delete"
 )
 
@@ -35,6 +36,13 @@ func (g ScopeGuard) RequirePlatformAccountID(platformAccountID string) error {
 	bindingID, err := BindingIDFromPlatformAccountID(platformAccountID)
 	if err != nil || bindingID == 0 || g.BindingID != bindingID {
 		return ErrBindingScopeDenied
+	}
+	return nil
+}
+
+func (g ScopeGuard) RequireBindingWide() error {
+	if g.ProfileID != 0 {
+		return ErrProfileScopeDenied
 	}
 	return nil
 }

@@ -28,7 +28,7 @@ func (r *DeviceRepo) Save(ctx context.Context, device *biz.Device) error {
 		LastSeenAt:        device.LastSeenAt,
 	}
 
-	return r.db.WithContext(ctx).Clauses(clause.OnConflict{
+	return dbFromContext(ctx, r.db).Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "platform_account_id"}, {Name: "device_id"}},
 		DoUpdates: clause.AssignmentColumns([]string{"device_fp", "device_name", "is_valid", "last_seen_at", "updated_at"}),
 	}).Create(&record).Error
@@ -36,7 +36,7 @@ func (r *DeviceRepo) Save(ctx context.Context, device *biz.Device) error {
 
 func (r *DeviceRepo) ListByPlatformAccountID(ctx context.Context, platformAccountID string) ([]*biz.Device, error) {
 	var records []model.DeviceRecord
-	if err := r.db.WithContext(ctx).Where("platform_account_id = ?", platformAccountID).Order("id asc").Find(&records).Error; err != nil {
+	if err := dbFromContext(ctx, r.db).Where("platform_account_id = ?", platformAccountID).Order("id asc").Find(&records).Error; err != nil {
 		return nil, err
 	}
 
@@ -57,5 +57,5 @@ func (r *DeviceRepo) ListByPlatformAccountID(ctx context.Context, platformAccoun
 }
 
 func (r *DeviceRepo) DeleteByPlatformAccountID(ctx context.Context, platformAccountID string) error {
-	return r.db.WithContext(ctx).Where("platform_account_id = ?", platformAccountID).Delete(&model.DeviceRecord{}).Error
+	return dbFromContext(ctx, r.db).Where("platform_account_id = ?", platformAccountID).Delete(&model.DeviceRecord{}).Error
 }

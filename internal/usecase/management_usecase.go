@@ -3,7 +3,6 @@ package usecase
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
 	v1 "platform-mihomo-service/api/mihomo/v1"
@@ -80,6 +79,16 @@ func (uc *ManagementUsecase) GetCredentialSummary(ctx context.Context, platformA
 	}, nil
 }
 
+func (uc *ManagementUsecase) GetCredentialSummaryWithScope(ctx context.Context, guard ScopeGuard, platformAccountID string) (*CredentialSummaryOutput, error) {
+	if err := guard.RequirePlatformAccountID(platformAccountID); err != nil {
+		return nil, err
+	}
+	if err := guard.RequireBindingWide(); err != nil {
+		return nil, err
+	}
+	return uc.GetCredentialSummary(ctx, platformAccountID)
+}
+
 type UpdateCredentialInput struct {
 	PlatformAccountID string
 	BindCredentialInput
@@ -94,25 +103,53 @@ func (uc *ManagementUsecase) UpdateCredential(ctx context.Context, input UpdateC
 		return nil, ErrCredentialNotFound
 	}
 
-	output, err := uc.bindUC.BindCredential(ctx, input.BindCredentialInput)
+	prepared, err := uc.bindUC.prepareBindCredential(ctx, input.BindCredentialInput)
 	if err != nil {
 		return nil, err
 	}
-	if output.PlatformAccountID != input.PlatformAccountID {
-		if cleanupErr := uc.management.DeleteCredentialGraph(ctx, output.PlatformAccountID); cleanupErr != nil {
-			return nil, fmt.Errorf("%w: cleanup failed: %v", ErrPlatformAccountMismatch, cleanupErr)
-		}
+	if prepared.platformAccountID != input.PlatformAccountID {
 		return nil, ErrPlatformAccountMismatch
 	}
-	if err := uc.pruneStaleProfiles(ctx, input.PlatformAccountID, output.Profiles); err != nil {
+
+	err = uc.bindUC.runInTransaction(ctx, func(txCtx context.Context) error {
+		result, err := uc.bindUC.bindPreparedCredential(txCtx, input.BindCredentialInput, prepared)
+		if err != nil {
+			return err
+		}
+		if err := uc.pruneStaleProfiles(txCtx, input.PlatformAccountID, result.Profiles); err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
 
 	return uc.GetCredentialSummary(ctx, input.PlatformAccountID)
 }
 
+func (uc *ManagementUsecase) UpdateCredentialWithScope(ctx context.Context, guard ScopeGuard, input UpdateCredentialInput) (*CredentialSummaryOutput, error) {
+	if err := guard.RequirePlatformAccountID(input.PlatformAccountID); err != nil {
+		return nil, err
+	}
+	if err := guard.RequireBindingWide(); err != nil {
+		return nil, err
+	}
+	return uc.UpdateCredential(ctx, input)
+}
+
 func (uc *ManagementUsecase) DeleteCredential(ctx context.Context, platformAccountID string) error {
 	return uc.management.DeleteCredentialGraph(ctx, platformAccountID)
+}
+
+func (uc *ManagementUsecase) DeleteCredentialWithScope(ctx context.Context, guard ScopeGuard, platformAccountID string) error {
+	if err := guard.RequirePlatformAccountID(platformAccountID); err != nil {
+		return err
+	}
+	if err := guard.RequireBindingWide(); err != nil {
+		return err
+	}
+	return uc.DeleteCredential(ctx, platformAccountID)
 }
 
 func (uc *ManagementUsecase) pruneStaleProfiles(ctx context.Context, platformAccountID string, profiles []v1.ProfileSummary) error {

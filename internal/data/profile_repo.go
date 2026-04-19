@@ -31,7 +31,7 @@ func (r *ProfileRepo) Save(ctx context.Context, profile *biz.Profile) error {
 		DiscoveredAt:      profile.DiscoveredAt,
 	}
 
-	return r.db.WithContext(ctx).Clauses(clause.OnConflict{
+	return dbFromContext(ctx, r.db).Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "platform_account_id"}, {Name: "player_id"}, {Name: "region"}},
 		DoUpdates: clause.AssignmentColumns([]string{"game_biz", "nickname", "level", "is_default", "updated_at"}),
 	}).Create(&record).Error
@@ -39,7 +39,7 @@ func (r *ProfileRepo) Save(ctx context.Context, profile *biz.Profile) error {
 
 func (r *ProfileRepo) ListByBindingID(ctx context.Context, bindingID uint64) ([]*biz.Profile, error) {
 	var records []model.AccountProfile
-	if err := r.db.WithContext(ctx).Where("binding_id = ?", bindingID).Order("id asc").Find(&records).Error; err != nil {
+	if err := dbFromContext(ctx, r.db).Where("binding_id = ?", bindingID).Order("id asc").Find(&records).Error; err != nil {
 		return nil, err
 	}
 
@@ -48,7 +48,7 @@ func (r *ProfileRepo) ListByBindingID(ctx context.Context, bindingID uint64) ([]
 
 func (r *ProfileRepo) ListByPlatformAccountID(ctx context.Context, platformAccountID string) ([]*biz.Profile, error) {
 	var records []model.AccountProfile
-	if err := r.db.WithContext(ctx).Where("platform_account_id = ?", platformAccountID).Order("id asc").Find(&records).Error; err != nil {
+	if err := dbFromContext(ctx, r.db).Where("platform_account_id = ?", platformAccountID).Order("id asc").Find(&records).Error; err != nil {
 		return nil, err
 	}
 
@@ -56,12 +56,12 @@ func (r *ProfileRepo) ListByPlatformAccountID(ctx context.Context, platformAccou
 }
 
 func (r *ProfileRepo) DeleteByPlatformAccountID(ctx context.Context, platformAccountID string) error {
-	return r.db.WithContext(ctx).Where("platform_account_id = ?", platformAccountID).Delete(&model.AccountProfile{}).Error
+	return dbFromContext(ctx, r.db).Where("platform_account_id = ?", platformAccountID).Delete(&model.AccountProfile{}).Error
 }
 
 func (r *ProfileRepo) DeleteMissingByPlatformAccountID(ctx context.Context, platformAccountID string, keep []biz.ProfileIdentity) error {
 	var records []model.AccountProfile
-	if err := r.db.WithContext(ctx).Where("platform_account_id = ?", platformAccountID).Find(&records).Error; err != nil {
+	if err := dbFromContext(ctx, r.db).Where("platform_account_id = ?", platformAccountID).Find(&records).Error; err != nil {
 		return err
 	}
 	keepSet := make(map[string]struct{}, len(keep))
@@ -73,7 +73,7 @@ func (r *ProfileRepo) DeleteMissingByPlatformAccountID(ctx context.Context, plat
 		if _, ok := keepSet[key]; ok {
 			continue
 		}
-		if err := r.db.WithContext(ctx).Delete(&model.AccountProfile{}, record.ID).Error; err != nil {
+		if err := dbFromContext(ctx, r.db).Delete(&model.AccountProfile{}, record.ID).Error; err != nil {
 			return err
 		}
 	}

@@ -70,6 +70,25 @@ func TestMihomoCredentialServiceRejectsMissingSummaryScope(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestMihomoCredentialServiceRejectsProfileScopedSummaryTicket(t *testing.T) {
+	harness := newMihomoCredentialServiceForTest(t)
+
+	bindResp, err := harness.bindUC.BindCredential(context.Background(), usecase.BindCredentialInput{
+		BindingID:        101,
+		CookieBundleJSON: `{"account_id":"10001","cookie_token":"abc"}`,
+		DeviceID:         "12345678-1234-1234-1234-123456789abc",
+		DeviceFP:         "abcdefghijklmn",
+		DeviceName:       "iPhone",
+	})
+	require.NoError(t, err)
+
+	_, err = harness.service.GetCredentialSummary(context.Background(), &mihomov1.GetCredentialSummaryRequest{
+		ServiceTicket:     signedServiceTicketForProfile(t, bindResp.PlatformAccountID, 999, "mihomo.credential.read_meta"),
+		PlatformAccountId: bindResp.PlatformAccountID,
+	})
+	require.Error(t, err)
+}
+
 func signedMihomoSummaryTicket(t *testing.T, platformAccountID string, scopes ...string) string {
 	t.Helper()
 	return signedServiceTicketForAccount(t, platformAccountID, scopes...)

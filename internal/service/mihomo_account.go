@@ -119,7 +119,11 @@ func (s *MihomoAccountService) RefreshCredential(ctx context.Context, req *v1.Re
 	if err != nil {
 		return nil, err
 	}
-	if _, err := scopedGuardForPlatformAccount(claims, req.GetPlatformAccountId(), usecase.ActionStatusRead); err != nil {
+	guard, err := scopedGuardForPlatformAccount(claims, req.GetPlatformAccountId(), usecase.ActionCredentialRefresh)
+	if err != nil {
+		return nil, mapUsecaseError(err)
+	}
+	if err := guard.RequireBindingWide(); err != nil {
 		return nil, mapUsecaseError(err)
 	}
 
@@ -212,11 +216,12 @@ func (s *MihomoAccountService) GetCredentialSummary(ctx context.Context, req *v1
 		return nil, err
 	}
 
-	if _, err := scopedGuardForPlatformAccount(claims, req.GetPlatformAccountId(), usecase.ActionCredentialRead); err != nil {
+	guard, err := scopedGuard(claims, usecase.ActionCredentialRead)
+	if err != nil {
 		return nil, mapUsecaseError(err)
 	}
 
-	output, err := s.managementUC.GetCredentialSummary(ctx, req.GetPlatformAccountId())
+	output, err := s.managementUC.GetCredentialSummaryWithScope(ctx, guard, req.GetPlatformAccountId())
 	if err != nil {
 		return nil, mapUsecaseError(err)
 	}
@@ -233,7 +238,8 @@ func (s *MihomoAccountService) UpdateCredential(ctx context.Context, req *v1.Upd
 	if err != nil {
 		return nil, err
 	}
-	if _, err := scopedGuardForPlatformAccount(claims, req.GetPlatformAccountId(), usecase.ActionCredentialUpdate); err != nil {
+	guard, err := scopedGuard(claims, usecase.ActionCredentialUpdate)
+	if err != nil {
 		return nil, mapUsecaseError(err)
 	}
 	if req.GetDevice() == nil {
@@ -255,7 +261,7 @@ func (s *MihomoAccountService) UpdateCredential(ctx context.Context, req *v1.Upd
 		input.DeviceName = device.GetDeviceName()
 	}
 
-	output, err := s.managementUC.UpdateCredential(ctx, input)
+	output, err := s.managementUC.UpdateCredentialWithScope(ctx, guard, input)
 	if err != nil {
 		return nil, mapUsecaseError(err)
 	}
@@ -272,11 +278,12 @@ func (s *MihomoAccountService) DeleteCredential(ctx context.Context, req *v1.Del
 	if err != nil {
 		return nil, err
 	}
-	if _, err := scopedGuardForPlatformAccount(claims, req.GetPlatformAccountId(), usecase.ActionCredentialDelete); err != nil {
+	guard, err := scopedGuard(claims, usecase.ActionCredentialDelete)
+	if err != nil {
 		return nil, mapUsecaseError(err)
 	}
 
-	if err := s.managementUC.DeleteCredential(ctx, req.GetPlatformAccountId()); err != nil {
+	if err := s.managementUC.DeleteCredentialWithScope(ctx, guard, req.GetPlatformAccountId()); err != nil {
 		return nil, mapUsecaseError(err)
 	}
 

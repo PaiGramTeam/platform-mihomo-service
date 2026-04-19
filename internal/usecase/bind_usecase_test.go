@@ -137,6 +137,262 @@ func TestBindCredentialRollsBackWhenProfileSaveFails(t *testing.T) {
 	require.Empty(t, uc.profileRepo.byPlatformAccountID)
 }
 
+func TestBindCredentialRebindRemovesOldPlatformScopedRows(t *testing.T) {
+	client := &sequentialMihomoClient{
+		results: []mihomoValidateResult{
+			{
+				accountID: "10001",
+				region:    "cn_gf01",
+				profiles: []platformmihomo.DiscoveredProfile{{
+					GameBiz:  "hk4e_cn",
+					Region:   "cn_gf01",
+					PlayerID: "1008611",
+					Nickname: "Traveler",
+					Level:    60,
+				}},
+			},
+			{
+				accountID: "20002",
+				region:    "cn_gf01",
+				profiles: []platformmihomo.DiscoveredProfile{{
+					GameBiz:  "hk4e_cn",
+					Region:   "cn_gf01",
+					PlayerID: "2008622",
+					Nickname: "Rebound",
+					Level:    55,
+				}},
+			},
+		},
+	}
+	uc := newBindUsecaseForTestWithClient(client)
+
+	first, err := uc.BindCredential(context.Background(), BindCredentialInput{
+		BindingID:        42,
+		CookieBundleJSON: `{"account_id":"10001","cookie_token":"abc"}`,
+		DeviceID:         "device-old",
+		DeviceFP:         "fp-old",
+	})
+	require.NoError(t, err)
+
+	second, err := uc.BindCredential(context.Background(), BindCredentialInput{
+		BindingID:        42,
+		CookieBundleJSON: `{"account_id":"20002","cookie_token":"def"}`,
+		DeviceID:         "device-new",
+		DeviceFP:         "fp-new",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "binding_42_20002", second.PlatformAccountID)
+
+	_, ok := uc.credentialRepo.byPlatformAccountID[first.PlatformAccountID]
+	require.False(t, ok)
+	require.NotContains(t, uc.deviceRepo.byPlatformAccountID, first.PlatformAccountID)
+	require.NotContains(t, uc.profileRepo.byPlatformAccountID, first.PlatformAccountID)
+
+	credential, err := uc.credentialRepo.GetByBindingID(context.Background(), 42)
+	require.NoError(t, err)
+	require.NotNil(t, credential)
+	require.Equal(t, second.PlatformAccountID, credential.PlatformAccountID)
+
+	profiles, err := uc.profileRepo.ListByBindingID(context.Background(), 42)
+	require.NoError(t, err)
+	require.Len(t, profiles, 1)
+	require.Equal(t, second.PlatformAccountID, profiles[0].PlatformAccountID)
+	require.Equal(t, "2008622", profiles[0].PlayerID)
+
+	devices, err := uc.deviceRepo.ListByPlatformAccountID(context.Background(), second.PlatformAccountID)
+	require.NoError(t, err)
+	require.Len(t, devices, 1)
+	require.Equal(t, "device-new", devices[0].DeviceID)
+}
+
+func TestBindCredentialRebindRollbackRestoresPreviousBindingState(t *testing.T) {
+	client := &sequentialMihomoClient{
+		results: []mihomoValidateResult{
+			{
+				accountID: "10001",
+				region:    "cn_gf01",
+				profiles: []platformmihomo.DiscoveredProfile{{
+					GameBiz:  "hk4e_cn",
+					Region:   "cn_gf01",
+					PlayerID: "1008611",
+					Nickname: "Traveler",
+					Level:    60,
+				}},
+			},
+			{
+				accountID: "20002",
+				region:    "cn_gf01",
+				profiles: []platformmihomo.DiscoveredProfile{{
+					GameBiz:  "hk4e_cn",
+					Region:   "cn_gf01",
+					PlayerID: "2008622",
+					Nickname: "Rebound",
+					Level:    55,
+				}},
+			},
+		},
+	}
+	uc := newBindUsecaseForTestWithClient(client)
+
+	first, err := uc.BindCredential(context.Background(), BindCredentialInput{
+		BindingID:        42,
+		CookieBundleJSON: `{"account_id":"10001","cookie_token":"abc"}`,
+		DeviceID:         "device-old",
+		DeviceFP:         "fp-old",
+	})
+	require.NoError(t, err)
+
+	uc.profileRepo.failSave = true
+	_, err = uc.BindCredential(context.Background(), BindCredentialInput{
+		BindingID:        42,
+		CookieBundleJSON: `{"account_id":"20002","cookie_token":"def"}`,
+		DeviceID:         "device-new",
+		DeviceFP:         "fp-new",
+	})
+	require.Error(t, err)
+
+	credential, err := uc.credentialRepo.GetByBindingID(context.Background(), 42)
+	require.NoError(t, err)
+	require.NotNil(t, credential)
+	require.Equal(t, first.PlatformAccountID, credential.PlatformAccountID)
+
+	devices, err := uc.deviceRepo.ListByPlatformAccountID(context.Background(), first.PlatformAccountID)
+	require.NoError(t, err)
+	require.Len(t, devices, 1)
+	require.Equal(t, "device-old", devices[0].DeviceID)
+	require.NotContains(t, uc.deviceRepo.byPlatformAccountID, "binding_42_20002")
+
+	profiles, err := uc.profileRepo.ListByBindingID(context.Background(), 42)
+	require.NoError(t, err)
+	require.Len(t, profiles, 1)
+	require.Equal(t, first.PlatformAccountID, profiles[0].PlatformAccountID)
+	require.Equal(t, "1008611", profiles[0].PlayerID)
+	require.NotContains(t, uc.profileRepo.byPlatformAccountID, "binding_42_20002")
+}
+
+func TestBindCredentialRebindRollbackRestoresPreviousRowsWhenCleanupFails(t *testing.T) {
+	client := &sequentialMihomoClient{
+		results: []mihomoValidateResult{
+			{
+				accountID: "10001",
+				region:    "cn_gf01",
+				profiles: []platformmihomo.DiscoveredProfile{{
+					GameBiz:  "hk4e_cn",
+					Region:   "cn_gf01",
+					PlayerID: "1008611",
+					Nickname: "Traveler",
+					Level:    60,
+				}},
+			},
+			{
+				accountID: "20002",
+				region:    "cn_gf01",
+				profiles: []platformmihomo.DiscoveredProfile{{
+					GameBiz:  "hk4e_cn",
+					Region:   "cn_gf01",
+					PlayerID: "2008622",
+					Nickname: "Rebound",
+					Level:    55,
+				}},
+			},
+		},
+	}
+	uc := newBindUsecaseForTestWithClient(client)
+
+	first, err := uc.BindCredential(context.Background(), BindCredentialInput{
+		BindingID:        42,
+		CookieBundleJSON: `{"account_id":"10001","cookie_token":"abc"}`,
+		DeviceID:         "device-old",
+		DeviceFP:         "fp-old",
+	})
+	require.NoError(t, err)
+
+	uc.deviceRepo.failDeleteByPlatformAccountID[first.PlatformAccountID] = errors.New("cleanup failed")
+	_, err = uc.BindCredential(context.Background(), BindCredentialInput{
+		BindingID:        42,
+		CookieBundleJSON: `{"account_id":"20002","cookie_token":"def"}`,
+		DeviceID:         "device-new",
+		DeviceFP:         "fp-new",
+	})
+	require.ErrorContains(t, err, "cleanup failed")
+
+	credential, err := uc.credentialRepo.GetByBindingID(context.Background(), 42)
+	require.NoError(t, err)
+	require.NotNil(t, credential)
+	require.Equal(t, first.PlatformAccountID, credential.PlatformAccountID)
+
+	devices, err := uc.deviceRepo.ListByPlatformAccountID(context.Background(), first.PlatformAccountID)
+	require.NoError(t, err)
+	require.Len(t, devices, 1)
+	require.Equal(t, "device-old", devices[0].DeviceID)
+	require.NotContains(t, uc.deviceRepo.byPlatformAccountID, "binding_42_20002")
+
+	profiles, err := uc.profileRepo.ListByBindingID(context.Background(), 42)
+	require.NoError(t, err)
+	require.Len(t, profiles, 1)
+	require.Equal(t, first.PlatformAccountID, profiles[0].PlatformAccountID)
+	require.Equal(t, "1008611", profiles[0].PlayerID)
+	require.NotContains(t, uc.profileRepo.byPlatformAccountID, "binding_42_20002")
+}
+
+func TestBindCredentialRebindUsesLatestBindingSnapshotInsideTransaction(t *testing.T) {
+	uc := newBindUsecaseForTest()
+
+	first, err := uc.BindCredential(context.Background(), BindCredentialInput{
+		BindingID:        42,
+		CookieBundleJSON: `{"account_id":"10001","cookie_token":"abc"}`,
+		DeviceID:         "device-old",
+		DeviceFP:         "fp-old",
+	})
+	require.NoError(t, err)
+
+	mutatedAccountID := FormatPlatformAccountID(42, "30003")
+	uc.client = &mutatingMihomoClient{
+		repo:           uc.credentialRepo,
+		deviceRepo:     uc.deviceRepo,
+		profileRepo:    uc.profileRepo,
+		bindingID:      42,
+		newAccountID:   mutatedAccountID,
+		discoveredID:   "20002",
+		discoveredUID:  "2008622",
+		discoveredName: "Fresh",
+	}
+
+	second, err := uc.BindCredential(context.Background(), BindCredentialInput{
+		BindingID:        42,
+		CookieBundleJSON: `{"account_id":"20002","cookie_token":"def"}`,
+		DeviceID:         "device-new",
+		DeviceFP:         "fp-new",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "binding_42_20002", second.PlatformAccountID)
+
+	_, ok := uc.credentialRepo.byPlatformAccountID[mutatedAccountID]
+	require.False(t, ok)
+	require.NotContains(t, uc.deviceRepo.byPlatformAccountID, mutatedAccountID)
+	require.NotContains(t, uc.profileRepo.byPlatformAccountID, mutatedAccountID)
+
+	credential, err := uc.credentialRepo.GetByBindingID(context.Background(), 42)
+	require.NoError(t, err)
+	require.NotNil(t, credential)
+	require.Equal(t, second.PlatformAccountID, credential.PlatformAccountID)
+	require.NotEqual(t, first.PlatformAccountID, credential.PlatformAccountID)
+}
+
+func TestBindCredentialValidatesBeforeTransaction(t *testing.T) {
+	client := &transactionObservingClient{}
+	uc := newBindUsecaseForTestWithClient(client)
+
+	_, err := uc.BindCredential(context.Background(), BindCredentialInput{
+		BindingID:        101,
+		CookieBundleJSON: `{"account_id":"10001","cookie_token":"abc"}`,
+		DeviceID:         "12345678-1234-1234-1234-123456789abc",
+		DeviceFP:         "abcdefghijklmn",
+	})
+	require.NoError(t, err)
+	require.False(t, client.calledDuringTransaction)
+}
+
 var testEncryptionKey = []byte("0123456789abcdef0123456789abcdef")
 
 type bindUsecaseTestHarness struct {
@@ -148,11 +404,20 @@ type bindUsecaseTestHarness struct {
 }
 
 func newBindUsecaseForTest() *bindUsecaseTestHarness {
+	return newBindUsecaseForTestWithClient(platformmihomo.StubClient{})
+}
+
+func newBindUsecaseForTestWithClient(client platformmihomo.Client) *bindUsecaseTestHarness {
 	credentialRepo := newMemoryCredentialRepo()
 	deviceRepo := newMemoryDeviceRepo()
 	profileRepo := newMemoryProfileRepo()
+	credentialRepo.deviceRepo = deviceRepo
+	credentialRepo.profileRepo = profileRepo
+	if observingClient, ok := client.(*transactionObservingClient); ok {
+		observingClient.repo = credentialRepo
+	}
 
-	bindUsecase := NewBindUsecase(credentialRepo, deviceRepo, profileRepo, platformmihomo.StubClient{}, testEncryptionKey)
+	bindUsecase := NewBindUsecase(credentialRepo, deviceRepo, profileRepo, client, testEncryptionKey)
 
 	return &bindUsecaseTestHarness{
 		BindUsecase:    bindUsecase,
@@ -163,9 +428,97 @@ func newBindUsecaseForTest() *bindUsecaseTestHarness {
 	}
 }
 
+type mihomoValidateResult struct {
+	accountID string
+	region    string
+	profiles  []platformmihomo.DiscoveredProfile
+	err       error
+}
+
+type sequentialMihomoClient struct {
+	results []mihomoValidateResult
+	index   int
+}
+
+func (c *sequentialMihomoClient) ValidateAndDiscover(_ context.Context, _ string, _ string) (string, string, []platformmihomo.DiscoveredProfile, error) {
+	result := c.results[c.index]
+	c.index++
+	return result.accountID, result.region, result.profiles, result.err
+}
+
+func (c *sequentialMihomoClient) IssueAuthKey(_ context.Context, _ string, _ string) (string, int64, error) {
+	return "stub-authkey", 300, nil
+}
+
+type mutatingMihomoClient struct {
+	repo           *memoryCredentialRepo
+	deviceRepo     *memoryDeviceRepo
+	profileRepo    *memoryProfileRepo
+	bindingID      uint64
+	newAccountID   string
+	discoveredID   string
+	discoveredUID  string
+	discoveredName string
+	mutated        bool
+}
+
+func (c *mutatingMihomoClient) ValidateAndDiscover(_ context.Context, _ string, _ string) (string, string, []platformmihomo.DiscoveredProfile, error) {
+	if !c.mutated {
+		credential := &biz.Credential{
+			BindingID:         c.bindingID,
+			PlatformAccountID: c.newAccountID,
+			Platform:          "mihomo",
+			AccountID:         "30003",
+			Region:            "cn_gf01",
+			CredentialBlob:    "blob-30003",
+			CredentialVersion: "v1",
+			Status:            "active",
+		}
+		_ = c.repo.Save(context.Background(), credential)
+		_ = c.deviceRepo.Save(context.Background(), &biz.Device{PlatformAccountID: c.newAccountID, DeviceID: "device-mutated", DeviceFP: "fp-mutated", IsValid: true})
+		_ = c.profileRepo.Save(context.Background(), &biz.Profile{BindingID: c.bindingID, PlatformAccountID: c.newAccountID, GameBiz: "hk4e_cn", Region: "cn_gf01", PlayerID: "3008611", Nickname: "Mutated", Level: 60, IsDefault: true})
+		c.mutated = true
+	}
+
+	return c.discoveredID, "cn_gf01", []platformmihomo.DiscoveredProfile{{
+		GameBiz:  "hk4e_cn",
+		Region:   "cn_gf01",
+		PlayerID: c.discoveredUID,
+		Nickname: c.discoveredName,
+		Level:    55,
+	}}, nil
+}
+
+func (c *mutatingMihomoClient) IssueAuthKey(_ context.Context, _ string, _ string) (string, int64, error) {
+	return "stub-authkey", 300, nil
+}
+
+type transactionObservingClient struct {
+	calledDuringTransaction bool
+	repo                    *memoryCredentialRepo
+}
+
+func (c *transactionObservingClient) ValidateAndDiscover(_ context.Context, _ string, _ string) (string, string, []platformmihomo.DiscoveredProfile, error) {
+	c.calledDuringTransaction = c.repo.inTransaction
+	return "10001", "cn_gf01", []platformmihomo.DiscoveredProfile{{
+		GameBiz:  "hk4e_cn",
+		Region:   "cn_gf01",
+		PlayerID: "1008611",
+		Nickname: "Traveler",
+		Level:    60,
+	}}, nil
+}
+
+func (c *transactionObservingClient) IssueAuthKey(_ context.Context, _ string, _ string) (string, int64, error) {
+	return "stub-authkey", 300, nil
+}
+
 type memoryCredentialRepo struct {
 	byPlatformAccountID map[string]*biz.Credential
 	byBindingID         map[uint64]*biz.Credential
+	deviceRepo          *memoryDeviceRepo
+	profileRepo         *memoryProfileRepo
+	inTransaction       bool
 }
 
 func newMemoryCredentialRepo() *memoryCredentialRepo {
@@ -202,18 +555,45 @@ func (r *memoryCredentialRepo) GetByBindingID(_ context.Context, bindingID uint6
 
 func (r *memoryCredentialRepo) DeleteByPlatformAccountID(_ context.Context, platformAccountID string) error {
 	if credential := r.byPlatformAccountID[platformAccountID]; credential != nil {
-		delete(r.byBindingID, credential.BindingID)
+		if current := r.byBindingID[credential.BindingID]; current != nil && current.PlatformAccountID == platformAccountID {
+			delete(r.byBindingID, credential.BindingID)
+		}
 	}
 	delete(r.byPlatformAccountID, platformAccountID)
 	return nil
 }
 
+func (r *memoryCredentialRepo) WithinTransaction(ctx context.Context, fn func(context.Context) error) error {
+	credentialByPlatform := cloneCredentialMapByPlatformAccountID(r.byPlatformAccountID)
+	credentialByBinding := cloneCredentialMapByBindingID(r.byBindingID)
+	deviceByPlatform := cloneDeviceMapByPlatformAccountID(r.deviceRepo.byPlatformAccountID)
+	profileByPlatform := cloneProfileMapByPlatformAccountID(r.profileRepo.byPlatformAccountID)
+	profileByBinding := cloneProfileMapByBindingID(r.profileRepo.byBindingID)
+	r.inTransaction = true
+	defer func() {
+		r.inTransaction = false
+	}()
+	if err := fn(ctx); err != nil {
+		r.byPlatformAccountID = credentialByPlatform
+		r.byBindingID = credentialByBinding
+		r.deviceRepo.byPlatformAccountID = deviceByPlatform
+		r.profileRepo.byPlatformAccountID = profileByPlatform
+		r.profileRepo.byBindingID = profileByBinding
+		return err
+	}
+	return nil
+}
+
 type memoryDeviceRepo struct {
-	byPlatformAccountID map[string][]*biz.Device
+	byPlatformAccountID           map[string][]*biz.Device
+	failDeleteByPlatformAccountID map[string]error
 }
 
 func newMemoryDeviceRepo() *memoryDeviceRepo {
-	return &memoryDeviceRepo{byPlatformAccountID: make(map[string][]*biz.Device)}
+	return &memoryDeviceRepo{
+		byPlatformAccountID:           make(map[string][]*biz.Device),
+		failDeleteByPlatformAccountID: make(map[string]error),
+	}
 }
 
 func (r *memoryDeviceRepo) Save(_ context.Context, device *biz.Device) error {
@@ -241,6 +621,9 @@ func (r *memoryDeviceRepo) ListByPlatformAccountID(_ context.Context, platformAc
 }
 
 func (r *memoryDeviceRepo) DeleteByPlatformAccountID(_ context.Context, platformAccountID string) error {
+	if err := r.failDeleteByPlatformAccountID[platformAccountID]; err != nil {
+		return err
+	}
 	delete(r.byPlatformAccountID, platformAccountID)
 	return nil
 }
@@ -306,7 +689,19 @@ func (r *memoryProfileRepo) ListByBindingID(_ context.Context, bindingID uint64)
 
 func (r *memoryProfileRepo) DeleteByPlatformAccountID(_ context.Context, platformAccountID string) error {
 	if profiles := r.byPlatformAccountID[platformAccountID]; len(profiles) > 0 {
-		delete(r.byBindingID, profiles[0].BindingID)
+		bindingID := profiles[0].BindingID
+		current := r.byBindingID[bindingID]
+		filtered := make([]*biz.Profile, 0, len(current))
+		for _, profile := range current {
+			if profile.PlatformAccountID != platformAccountID {
+				filtered = append(filtered, profile)
+			}
+		}
+		if len(filtered) == 0 {
+			delete(r.byBindingID, bindingID)
+		} else {
+			r.byBindingID[bindingID] = filtered
+		}
 	}
 	delete(r.byPlatformAccountID, platformAccountID)
 	return nil
@@ -338,3 +733,60 @@ func (r *memoryProfileRepo) DeleteMissingByPlatformAccountID(_ context.Context, 
 var _ biz.CredentialRepository = (*memoryCredentialRepo)(nil)
 var _ biz.DeviceRepository = (*memoryDeviceRepo)(nil)
 var _ biz.ProfileRepository = (*memoryProfileRepo)(nil)
+
+func cloneCredentialMapByPlatformAccountID(source map[string]*biz.Credential) map[string]*biz.Credential {
+	cloned := make(map[string]*biz.Credential, len(source))
+	for key, credential := range source {
+		clone := *credential
+		cloned[key] = &clone
+	}
+	return cloned
+}
+
+func cloneCredentialMapByBindingID(source map[uint64]*biz.Credential) map[uint64]*biz.Credential {
+	cloned := make(map[uint64]*biz.Credential, len(source))
+	for key, credential := range source {
+		clone := *credential
+		cloned[key] = &clone
+	}
+	return cloned
+}
+
+func cloneDeviceMapByPlatformAccountID(source map[string][]*biz.Device) map[string][]*biz.Device {
+	cloned := make(map[string][]*biz.Device, len(source))
+	for key, devices := range source {
+		copied := make([]*biz.Device, 0, len(devices))
+		for _, device := range devices {
+			clone := *device
+			copied = append(copied, &clone)
+		}
+		cloned[key] = copied
+	}
+	return cloned
+}
+
+func cloneProfileMapByPlatformAccountID(source map[string][]*biz.Profile) map[string][]*biz.Profile {
+	cloned := make(map[string][]*biz.Profile, len(source))
+	for key, profiles := range source {
+		copied := make([]*biz.Profile, 0, len(profiles))
+		for _, profile := range profiles {
+			clone := *profile
+			copied = append(copied, &clone)
+		}
+		cloned[key] = copied
+	}
+	return cloned
+}
+
+func cloneProfileMapByBindingID(source map[uint64][]*biz.Profile) map[uint64][]*biz.Profile {
+	cloned := make(map[uint64][]*biz.Profile, len(source))
+	for key, profiles := range source {
+		copied := make([]*biz.Profile, 0, len(profiles))
+		for _, profile := range profiles {
+			clone := *profile
+			copied = append(copied, &clone)
+		}
+		cloned[key] = copied
+	}
+	return cloned
+}
