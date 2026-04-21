@@ -157,7 +157,7 @@ func TestGenericPlatformServiceDescribePlatform(t *testing.T) {
 	require.Equal(t, "mihomo", resp.PlatformKey)
 	require.Equal(t, "Mihomo", resp.DisplayName)
 	require.Equal(t, serviceTicketAudience, resp.ServiceAudience)
-	require.Equal(t, []string{"summary", "put_credential", "refresh_credential", "delete_credential"}, resp.SupportedActions)
+	require.Equal(t, []string{"summary", "put_credential", "refresh_credential", "delete_credential", "confirm_primary_profile"}, resp.SupportedActions)
 	require.NotNil(t, resp.CredentialSchema)
 	require.NotEmpty(t, resp.CredentialSchema.Fields)
 }
@@ -215,7 +215,7 @@ func TestGenericPlatformServicePutCredentialBindsWhenPlatformAccountIDUnknown(t 
 	)
 
 	resp, err := adapter.PutCredential(context.Background(), &platformv1.PutCredentialRequest{
-		ServiceTicket: signedMihomoSummaryTicket(t, "", "mihomo.credential.bind"),
+		ServiceTicket:         signedMihomoSummaryTicket(t, "", "mihomo.credential.bind"),
 		CredentialPayloadJson: `{"cookie_bundle":"{\"account_id\":\"10001\",\"cookie_token\":\"abc\"}","device_id":"12345678-1234-1234-1234-123456789abc","device_fp":"abcdefghijklmn","device_name":"iPhone","region_hint":"cn_gf01"}`,
 	})
 	require.NoError(t, err)
@@ -249,7 +249,7 @@ func TestGenericPlatformServicePutCredentialRejectsCreateWithUpdateOnlyScope(t *
 	)
 
 	_, err := adapter.PutCredential(context.Background(), &platformv1.PutCredentialRequest{
-		ServiceTicket: signedMihomoSummaryTicket(t, "", "mihomo.credential.update"),
+		ServiceTicket:         signedMihomoSummaryTicket(t, "", "mihomo.credential.update"),
 		CredentialPayloadJson: `{"cookie_bundle":"{\"account_id\":\"10001\",\"cookie_token\":\"abc\"}","device_id":"12345678-1234-1234-1234-123456789abc","device_fp":"abcdefghijklmn","device_name":"iPhone","region_hint":"cn_gf01"}`,
 	})
 	require.Error(t, err)
@@ -290,8 +290,8 @@ func TestGenericPlatformServicePutCredentialRejectsUpdateWithBindOnlyScope(t *te
 	require.NoError(t, err)
 
 	_, err = adapter.PutCredential(context.Background(), &platformv1.PutCredentialRequest{
-		ServiceTicket:     signedMihomoSummaryTicket(t, bindResp.PlatformAccountID, "mihomo.credential.bind"),
-		PlatformAccountId: bindResp.PlatformAccountID,
+		ServiceTicket:         signedMihomoSummaryTicket(t, bindResp.PlatformAccountID, "mihomo.credential.bind"),
+		PlatformAccountId:     bindResp.PlatformAccountID,
 		CredentialPayloadJson: `{"cookie_bundle":"{\"account_id\":\"10001\",\"cookie_token\":\"updated\"}","device_id":"device-2","device_fp":"fp-2","device_name":"iPad","region_hint":"cn_gf01"}`,
 	})
 	require.Error(t, err)

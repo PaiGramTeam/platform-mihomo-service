@@ -46,7 +46,7 @@ func (s *GenericPlatformService) DescribePlatform(context.Context, *platformv1.D
 		PlatformKey:      "mihomo",
 		DisplayName:      "Mihomo",
 		ServiceAudience:  serviceTicketAudience,
-		SupportedActions: []string{"summary", "put_credential", "refresh_credential", "delete_credential"},
+		SupportedActions: []string{"summary", "put_credential", "refresh_credential", "delete_credential", "confirm_primary_profile"},
 		CredentialSchema: credentialSchema,
 		Version:          "v1",
 	}, nil
@@ -217,7 +217,6 @@ func decodeGenericCredentialPayload(raw string) (*genericCredentialPayload, erro
 	}
 	return &payload, nil
 }
-
 
 func toGenericCredentialSummary(output *usecase.CredentialSummaryOutput) *platformv1.GetCredentialSummaryResponse {
 	profiles := make([]*platformv1.ProfileSummary, 0, len(output.Profiles))
