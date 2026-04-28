@@ -35,6 +35,21 @@ func TestGenericPlatformServiceInvalidateConsumerGrantRejectsConsumerTicket(t *t
 	require.Empty(t, store.minimums)
 }
 
+func TestGenericPlatformServiceInvalidateConsumerGrantRejectsSystemTicket(t *testing.T) {
+	store := newMemoryGrantInvalidationStore()
+	adapter := newGenericPlatformServiceForAdapterTest(store)
+
+	_, err := adapter.InvalidateConsumerGrant(context.Background(), &platformv1.InvalidateConsumerGrantRequest{
+		ServiceTicket:       signedAdapterServiceTicket(t, adapterTicketOptions{ActorType: "system", Scopes: []string{"mihomo.consumer_grant.invalidate"}}),
+		BindingId:           101,
+		Consumer:            "paimon-bot",
+		MinimumGrantVersion: 2,
+	})
+
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+	require.Empty(t, store.minimums)
+}
+
 func TestGenericPlatformServiceInvalidateConsumerGrantStoresMinimumVersion(t *testing.T) {
 	store := newMemoryGrantInvalidationStore()
 	adapter := newGenericPlatformServiceForAdapterTest(store)
@@ -111,7 +126,7 @@ func TestGenericPlatformServiceRejectsStaleConsumerTicketAfterGrantInvalidation(
 		PlatformAccountId: "binding_101_10001",
 	})
 
-	require.Equal(t, codes.Unauthenticated, status.Code(err))
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
 type grantInvalidationKey struct {

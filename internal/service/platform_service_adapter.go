@@ -66,7 +66,7 @@ func (s *GenericPlatformService) GetCredentialSummary(ctx context.Context, req *
 
 	claims, err := s.ticketVerifier.VerifyContext(ctx, req.GetServiceTicket(), serviceTicketAudience)
 	if err != nil {
-		return nil, status.Error(codes.Unauthenticated, "invalid service ticket")
+		return nil, mapTicketVerificationError(err)
 	}
 	guard, err := scopedGuardForPlatformAccount(claims, req.GetPlatformAccountId(), usecase.ActionCredentialRead)
 	if err != nil {
@@ -88,7 +88,7 @@ func (s *GenericPlatformService) PutCredential(ctx context.Context, req *platfor
 
 	claims, err := s.ticketVerifier.VerifyContext(ctx, req.GetServiceTicket(), serviceTicketAudience)
 	if err != nil {
-		return nil, status.Error(codes.Unauthenticated, "invalid service ticket")
+		return nil, mapTicketVerificationError(err)
 	}
 	guard, err := scopedGuard(claims)
 	if err != nil {
@@ -150,7 +150,7 @@ func (s *GenericPlatformService) RefreshCredential(ctx context.Context, req *pla
 
 	claims, err := s.ticketVerifier.VerifyContext(ctx, req.GetServiceTicket(), serviceTicketAudience)
 	if err != nil {
-		return nil, status.Error(codes.Unauthenticated, "invalid service ticket")
+		return nil, mapTicketVerificationError(err)
 	}
 	guard, err := scopedGuard(claims, usecase.ActionCredentialRefresh)
 	if err != nil {
@@ -184,7 +184,7 @@ func (s *GenericPlatformService) DeleteCredential(ctx context.Context, req *plat
 
 	claims, err := s.ticketVerifier.VerifyContext(ctx, req.GetServiceTicket(), serviceTicketAudience)
 	if err != nil {
-		return nil, status.Error(codes.Unauthenticated, "invalid service ticket")
+		return nil, mapTicketVerificationError(err)
 	}
 	guard, err := scopedGuard(claims, usecase.ActionCredentialDelete)
 	if err != nil {
@@ -225,10 +225,10 @@ func (s *GenericPlatformService) InvalidateConsumerGrant(ctx context.Context, re
 
 	claims, err := s.ticketVerifier.VerifyContext(ctx, req.GetServiceTicket(), serviceTicketAudience)
 	if err != nil {
-		return nil, status.Error(codes.Unauthenticated, "invalid service ticket")
+		return nil, mapTicketVerificationError(err)
 	}
-	if claims.ActorType == "consumer" {
-		return nil, status.Error(codes.PermissionDenied, "consumer tickets cannot invalidate grants")
+	if claims.ActorType != "admin" && claims.ActorType != "user" {
+		return nil, status.Error(codes.PermissionDenied, "only admin or user tickets can invalidate grants")
 	}
 	if claims.BindingID != req.GetBindingId() {
 		return nil, status.Error(codes.PermissionDenied, "ticket binding_id does not match request")

@@ -179,6 +179,43 @@ func TestRefreshCredentialRejectsProfileScopedTicket(t *testing.T) {
 	require.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
+func TestGetCredentialStatusRejectsProfileScopedTicket(t *testing.T) {
+	svc := newMihomoAccountServiceForTest(t)
+	bindResp := bindCredentialForServiceTest(t, svc)
+
+	_, err := svc.GetCredentialStatus(context.Background(), &v1.GetCredentialStatusRequest{
+		ServiceTicket:     signedServiceTicketForProfile(t, bindResp.PlatformAccountId, 999, "mihomo.status.read"),
+		PlatformAccountId: bindResp.PlatformAccountId,
+	})
+	require.Error(t, err)
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
+func TestValidateCredentialRejectsProfileScopedTicket(t *testing.T) {
+	svc := newMihomoAccountServiceForTest(t)
+	bindResp := bindCredentialForServiceTest(t, svc)
+
+	_, err := svc.ValidateCredential(context.Background(), &v1.ValidateCredentialRequest{
+		ServiceTicket:     signedServiceTicketForProfile(t, bindResp.PlatformAccountId, 999, "mihomo.status.read"),
+		PlatformAccountId: bindResp.PlatformAccountId,
+	})
+	require.Error(t, err)
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
+func TestUpsertDeviceRejectsProfileScopedTicket(t *testing.T) {
+	svc := newMihomoAccountServiceForTest(t)
+	bindResp := bindCredentialForServiceTest(t, svc)
+
+	_, err := svc.UpsertDevice(context.Background(), &v1.UpsertDeviceRequest{
+		ServiceTicket:     signedServiceTicketForProfile(t, bindResp.PlatformAccountId, 999, "mihomo.device.update"),
+		PlatformAccountId: bindResp.PlatformAccountId,
+		Device:            &v1.DeviceInfo{DeviceId: "aaaaaaaa-1234-1234-1234-123456789abc", DeviceFp: "bbbbbbbbbbbbbb"},
+	})
+	require.Error(t, err)
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
 func TestConfirmPrimaryProfileRejectsUnknownPlayerID(t *testing.T) {
 	svc := newMihomoAccountServiceForTest(t)
 	bindResp, err := svc.BindCredential(context.Background(), &v1.BindCredentialRequest{

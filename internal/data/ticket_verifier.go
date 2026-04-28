@@ -2,12 +2,15 @@ package data
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/golang-jwt/jwt/v5"
 
 	"platform-mihomo-service/internal/biz"
 )
+
+var ErrGrantVersionRevoked = errors.New("service ticket grant version revoked")
 
 type TicketVerifier struct {
 	issuer string
@@ -98,7 +101,7 @@ func (v *TicketVerifier) VerifyContext(ctx context.Context, raw string, expected
 				return nil, err
 			}
 			if minimum > 0 && claims.GrantVersion < minimum {
-				return nil, fmt.Errorf("service ticket grant version revoked")
+				return nil, ErrGrantVersionRevoked
 			}
 		}
 	}

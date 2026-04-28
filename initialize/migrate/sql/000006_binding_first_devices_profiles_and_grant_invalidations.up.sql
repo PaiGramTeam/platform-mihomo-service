@@ -6,9 +6,19 @@ JOIN credential_records c ON c.platform_account_id = d.platform_account_id
 SET d.binding_id = c.binding_id
 WHERE d.binding_id IS NULL;
 
-DELETE d FROM device_records d
-LEFT JOIN credential_records c ON c.platform_account_id = d.platform_account_id
-WHERE c.id IS NULL;
+SET @device_backfill_failures = (
+    SELECT COUNT(*)
+    FROM device_records
+    WHERE binding_id IS NULL
+);
+SET @device_backfill_precheck = IF(
+    @device_backfill_failures > 0,
+    'SIGNAL SQLSTATE ''45000'' SET MESSAGE_TEXT = ''migration 000006 failed: device_records rows cannot be backfilled from credential_records''',
+    'DO 0'
+);
+PREPARE device_backfill_precheck_stmt FROM @device_backfill_precheck;
+EXECUTE device_backfill_precheck_stmt;
+DEALLOCATE PREPARE device_backfill_precheck_stmt;
 
 ALTER TABLE device_records
     MODIFY COLUMN binding_id BIGINT UNSIGNED NOT NULL,
@@ -16,12 +26,23 @@ ALTER TABLE device_records
     ADD UNIQUE KEY uniq_device_record_binding (binding_id, device_id),
     ADD KEY idx_device_binding_id (binding_id);
 
-DELETE p FROM account_profiles p
-JOIN account_profiles keep
-  ON keep.binding_id = p.binding_id
- AND keep.player_id = p.player_id
- AND keep.region = p.region
- AND keep.id < p.id;
+SET @duplicate_profile_rows = (
+    SELECT COUNT(*)
+    FROM (
+        SELECT binding_id, player_id, region
+        FROM account_profiles
+        GROUP BY binding_id, player_id, region
+        HAVING COUNT(*) > 1
+    ) duplicates
+);
+SET @profile_duplicate_precheck = IF(
+    @duplicate_profile_rows > 0,
+    'SIGNAL SQLSTATE ''45000'' SET MESSAGE_TEXT = ''migration 000006 failed: duplicate account_profiles rows for binding_id, player_id, region''',
+    'DO 0'
+);
+PREPARE profile_duplicate_precheck_stmt FROM @profile_duplicate_precheck;
+EXECUTE profile_duplicate_precheck_stmt;
+DEALLOCATE PREPARE profile_duplicate_precheck_stmt;
 
 ALTER TABLE account_profiles
     DROP INDEX uniq_platform_profile,

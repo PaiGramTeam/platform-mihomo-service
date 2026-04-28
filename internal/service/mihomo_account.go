@@ -74,7 +74,11 @@ func (s *MihomoAccountService) GetCredentialStatus(ctx context.Context, req *v1.
 	if err != nil {
 		return nil, err
 	}
-	if _, err := scopedGuardForPlatformAccount(claims, req.GetPlatformAccountId(), usecase.ActionStatusRead); err != nil {
+	guard, err := scopedGuardForPlatformAccount(claims, req.GetPlatformAccountId(), usecase.ActionStatusRead)
+	if err != nil {
+		return nil, mapUsecaseError(err)
+	}
+	if err := guard.RequireBindingWide(); err != nil {
 		return nil, mapUsecaseError(err)
 	}
 
@@ -98,7 +102,11 @@ func (s *MihomoAccountService) ValidateCredential(ctx context.Context, req *v1.V
 	if err != nil {
 		return nil, err
 	}
-	if _, err := scopedGuardForPlatformAccount(claims, req.GetPlatformAccountId(), usecase.ActionStatusRead); err != nil {
+	guard, err := scopedGuardForPlatformAccount(claims, req.GetPlatformAccountId(), usecase.ActionStatusRead)
+	if err != nil {
+		return nil, mapUsecaseError(err)
+	}
+	if err := guard.RequireBindingWide(); err != nil {
 		return nil, mapUsecaseError(err)
 	}
 
@@ -298,7 +306,11 @@ func (s *MihomoAccountService) UpsertDevice(ctx context.Context, req *v1.UpsertD
 	if err != nil {
 		return nil, err
 	}
-	if _, err := scopedGuardForPlatformAccount(claims, req.GetPlatformAccountId(), usecase.ActionDeviceUpdate); err != nil {
+	guard, err := scopedGuardForPlatformAccount(claims, req.GetPlatformAccountId(), usecase.ActionDeviceUpdate)
+	if err != nil {
+		return nil, mapUsecaseError(err)
+	}
+	if err := guard.RequireBindingWide(); err != nil {
 		return nil, mapUsecaseError(err)
 	}
 	device := req.GetDevice()
@@ -333,10 +345,17 @@ func (s *MihomoAccountService) ConfirmPrimaryProfile(ctx context.Context, req *v
 func (s *MihomoAccountService) verifyServiceTicket(ctx context.Context, raw string) (*biz.ServiceTicketClaims, error) {
 	claims, err := s.ticketVerifier.VerifyContext(ctx, raw, serviceTicketAudience)
 	if err != nil {
-		return nil, status.Error(codes.Unauthenticated, "invalid service ticket")
+		return nil, mapTicketVerificationError(err)
 	}
 
 	return claims, nil
+}
+
+func mapTicketVerificationError(err error) error {
+	if errors.Is(err, data.ErrGrantVersionRevoked) {
+		return status.Error(codes.PermissionDenied, err.Error())
+	}
+	return status.Error(codes.Unauthenticated, "invalid service ticket")
 }
 
 func mapUsecaseError(err error) error {

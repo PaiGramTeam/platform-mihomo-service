@@ -30,7 +30,7 @@ func (s *MihomoCredentialService) GetCredentialSummary(ctx context.Context, req 
 
 	claims, err := s.ticketVerifier.VerifyContext(ctx, req.GetServiceTicket(), serviceTicketAudience)
 	if err != nil {
-		return nil, status.Error(codes.Unauthenticated, "invalid service ticket")
+		return nil, mapTicketVerificationError(err)
 	}
 	guard, err := scopedGuardForPlatformAccount(claims, req.GetPlatformAccountId(), usecase.ActionCredentialRead)
 	if err != nil {
