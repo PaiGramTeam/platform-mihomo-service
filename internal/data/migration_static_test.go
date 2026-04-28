@@ -30,8 +30,9 @@ func TestBindingIDBackfillMigrationPrechecksLegacyAccountIDsBeforeDDL(t *testing
 	assertBeforeFirstAlter(t, normalized, firstAlter, "MALFORMED CREDENTIAL_RECORDS PLATFORM_ACCOUNT_ID VALUES")
 	assertBeforeFirstAlter(t, normalized, firstAlter, "DUPLICATE PARSED CREDENTIAL_RECORDS BINDING_ID VALUES")
 	assertBeforeFirstAlter(t, normalized, firstAlter, "MALFORMED ACCOUNT_PROFILES PLATFORM_ACCOUNT_ID VALUES")
-	assertBeforeFirstAlter(t, normalized, firstAlter, "DUPLICATE PARSED ACCOUNT_PROFILES BINDING_ID VALUES")
 	require.Less(t, strings.Index(normalized, "DUPLICATE_PARSED_CREDENTIAL_BINDING_IDS"), firstAlter)
+	require.NotContains(t, normalized, "DUPLICATE_PARSED_PROFILE_BINDING_IDS")
+	require.NotContains(t, normalized, "DUPLICATE PARSED ACCOUNT_PROFILES BINDING_ID VALUES")
 	require.Contains(t, normalized, "UNIQ_CREDENTIAL_BINDING_ID")
 }
 

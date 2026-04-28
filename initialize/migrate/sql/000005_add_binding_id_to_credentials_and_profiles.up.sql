@@ -57,29 +57,6 @@ PREPARE profile_account_id_precheck_stmt FROM @profile_account_id_precheck;
 EXECUTE profile_account_id_precheck_stmt;
 DEALLOCATE PREPARE profile_account_id_precheck_stmt;
 
-SET @duplicate_parsed_profile_binding_ids = (
-    SELECT COUNT(*)
-    FROM (
-        SELECT CASE
-            WHEN platform_account_id REGEXP '^binding_[1-9][0-9]*_.+$' THEN CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(platform_account_id, '_', 2), '_', -1) AS UNSIGNED)
-            WHEN platform_account_id REGEXP '^hoyo_ref_[1-9][0-9]*_.+$' THEN CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(platform_account_id, '_', 3), '_', -1) AS UNSIGNED)
-        END AS parsed_binding_id
-        FROM account_profiles
-        WHERE platform_account_id REGEXP '^binding_[1-9][0-9]*_.+$'
-           OR platform_account_id REGEXP '^hoyo_ref_[1-9][0-9]*_.+$'
-        GROUP BY parsed_binding_id
-        HAVING COUNT(*) > 1
-    ) duplicate_profile_binding_ids
-);
-SET @duplicate_profile_binding_id_precheck = IF(
-    @duplicate_parsed_profile_binding_ids > 0,
-    'SIGNAL SQLSTATE ''45000'' SET MESSAGE_TEXT = ''migration 000005 failed: duplicate parsed account_profiles binding_id values''',
-    'DO 0'
-);
-PREPARE duplicate_profile_binding_id_precheck_stmt FROM @duplicate_profile_binding_id_precheck;
-EXECUTE duplicate_profile_binding_id_precheck_stmt;
-DEALLOCATE PREPARE duplicate_profile_binding_id_precheck_stmt;
-
 ALTER TABLE credential_records
     ADD COLUMN binding_id BIGINT UNSIGNED NULL AFTER id;
 
