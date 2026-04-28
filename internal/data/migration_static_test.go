@@ -24,17 +24,15 @@ func TestBindingIDBackfillMigrationPrechecksLegacyAccountIDsBeforeDDL(t *testing
 	migration := readMigrationForStaticTest(t, "000005_add_binding_id_to_credentials_and_profiles.up.sql")
 	normalized := normalizeSQLForStaticTest(migration)
 
-	credentialSignal := strings.Index(normalized, "SIGNAL SQLSTATE ''45000''")
-	credentialAddColumn := strings.Index(normalized, "ALTER TABLE CREDENTIAL_RECORDS ADD COLUMN BINDING_ID")
-	require.NotEqual(t, -1, credentialSignal)
-	require.NotEqual(t, -1, credentialAddColumn)
-	require.Less(t, credentialSignal, credentialAddColumn)
+	firstAlter := strings.Index(normalized, "ALTER TABLE")
+	require.NotEqual(t, -1, firstAlter)
 
-	profileSignal := strings.LastIndex(normalized, "SIGNAL SQLSTATE ''45000''")
-	profileAddColumn := strings.Index(normalized, "ALTER TABLE ACCOUNT_PROFILES ADD COLUMN BINDING_ID")
-	require.NotEqual(t, -1, profileSignal)
-	require.NotEqual(t, -1, profileAddColumn)
-	require.Less(t, profileSignal, profileAddColumn)
+	assertBeforeFirstAlter(t, normalized, firstAlter, "MALFORMED CREDENTIAL_RECORDS PLATFORM_ACCOUNT_ID VALUES")
+	assertBeforeFirstAlter(t, normalized, firstAlter, "DUPLICATE PARSED CREDENTIAL_RECORDS BINDING_ID VALUES")
+	assertBeforeFirstAlter(t, normalized, firstAlter, "MALFORMED ACCOUNT_PROFILES PLATFORM_ACCOUNT_ID VALUES")
+	assertBeforeFirstAlter(t, normalized, firstAlter, "DUPLICATE PARSED ACCOUNT_PROFILES BINDING_ID VALUES")
+	require.Less(t, strings.Index(normalized, "DUPLICATE_PARSED_CREDENTIAL_BINDING_IDS"), firstAlter)
+	require.Contains(t, normalized, "UNIQ_CREDENTIAL_BINDING_ID")
 }
 
 func TestDestructiveTableMutationPatternDetectsMultiTableDrop(t *testing.T) {
@@ -67,6 +65,14 @@ func assertNoDestructiveTableMutation(t *testing.T, sql, table string) {
 	require.NotRegexp(t, regexp.MustCompile(`(?i)\bDELETE\b[^;]*\b`+identifier+`\b`), sql)
 	require.NotRegexp(t, regexp.MustCompile(`(?i)\bTRUNCATE\b\s+(?:\bTABLE\b\s+)?\b`+identifier+`\b`), sql)
 	require.NotRegexp(t, destructiveTableMutationPattern(table), sql)
+}
+
+func assertBeforeFirstAlter(t *testing.T, sql string, firstAlter int, required string) {
+	t.Helper()
+
+	index := strings.Index(sql, required)
+	require.NotEqual(t, -1, index, "missing precheck %q", required)
+	require.Less(t, index, firstAlter, "precheck %q must run before first ALTER TABLE", required)
 }
 
 func destructiveTableMutationPattern(table string) *regexp.Regexp {
