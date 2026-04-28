@@ -1,6 +1,7 @@
 package data
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -11,6 +12,11 @@ import (
 type TicketVerifier struct {
 	issuer string
 	key    []byte
+	lookup GrantVersionLookup
+}
+
+type GrantVersionLookup interface {
+	MinimumVersion(ctx context.Context, bindingID uint64, consumer string) (uint64, error)
 }
 
 type serviceTicketJWTClaims struct {
@@ -21,6 +27,7 @@ type serviceTicketJWTClaims struct {
 	Platform             string   `json:"platform"`
 	PlatformAccountID    string   `json:"platform_account_id"`
 	Consumer             string   `json:"consumer"`
+	GrantVersion         uint64   `json:"grant_version"`
 	ProfileID            uint64   `json:"profile_id"`
 	Scopes               []string `json:"scopes"`
 	AllowedActions       []string `json:"allowed_actions"`
@@ -36,7 +43,16 @@ func NewTicketVerifier(issuer string, key []byte) *TicketVerifier {
 	return &TicketVerifier{issuer: issuer, key: key}
 }
 
+func (v *TicketVerifier) WithGrantVersionLookup(lookup GrantVersionLookup) *TicketVerifier {
+	v.lookup = lookup
+	return v
+}
+
 func (v *TicketVerifier) Verify(raw string, expectedAudience string) (*biz.ServiceTicketClaims, error) {
+	return v.VerifyContext(context.Background(), raw, expectedAudience)
+}
+
+func (v *TicketVerifier) VerifyContext(ctx context.Context, raw string, expectedAudience string) (*biz.ServiceTicketClaims, error) {
 	claims := &serviceTicketJWTClaims{}
 
 	parsed, err := jwt.ParseWithClaims(raw, claims, func(token *jwt.Token) (any, error) {
@@ -73,6 +89,18 @@ func (v *TicketVerifier) Verify(raw string, expectedAudience string) (*biz.Servi
 		if claims.Consumer == "" {
 			return nil, fmt.Errorf("service ticket missing consumer")
 		}
+		if claims.GrantVersion == 0 {
+			return nil, fmt.Errorf("service ticket missing grant_version")
+		}
+		if v.lookup != nil {
+			minimum, err := v.lookup.MinimumVersion(ctx, claims.BindingID, claims.Consumer)
+			if err != nil {
+				return nil, err
+			}
+			if minimum > 0 && claims.GrantVersion < minimum {
+				return nil, fmt.Errorf("service ticket grant version revoked")
+			}
+		}
 	}
 	userID := claims.OwnerUserID
 	if claims.UserID != 0 {
@@ -91,6 +119,7 @@ func (v *TicketVerifier) Verify(raw string, expectedAudience string) (*biz.Servi
 		Platform:           claims.Platform,
 		PlatformAccountID:  claims.PlatformAccountID,
 		Consumer:           claims.Consumer,
+		GrantVersion:       claims.GrantVersion,
 		ProfileID:          claims.ProfileID,
 		Scopes:             actions,
 		Audience:           expectedAudience,
