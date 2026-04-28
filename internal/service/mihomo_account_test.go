@@ -400,6 +400,37 @@ func TestConfirmPrimaryProfileRejectsReadOnlyScope(t *testing.T) {
 	require.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
+func TestConfirmPrimaryProfileRejectsExpiredTicket(t *testing.T) {
+	svc := newMihomoAccountServiceForTest(t)
+	bindResp := bindCredentialForServiceTest(t, svc)
+
+	claims := jwt.MapClaims{
+		"iss":                  serviceTestIssuer,
+		"aud":                  []string{serviceTestAudience},
+		"actor_type":           "bot",
+		"actor_id":             "bot-paigram",
+		"owner_user_id":        float64(1),
+		"binding_id":           float64(101),
+		"bot_id":               "bot-paigram",
+		"platform":             "mihomo",
+		"platform_service_key": serviceTestAudience,
+		"platform_account_id":  bindResp.PlatformAccountId,
+		"scopes":               []string{"mihomo.profile.write"},
+		"exp":                  time.Now().Add(-time.Minute).Unix(),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	expiredTicket, err := token.SignedString(serviceTestSigningKey)
+	require.NoError(t, err)
+
+	_, err = svc.ConfirmPrimaryProfile(context.Background(), &v1.ConfirmPrimaryProfileRequest{
+		ServiceTicket:     expiredTicket,
+		PlatformAccountId: bindResp.PlatformAccountId,
+		PlayerId:          bindResp.Profiles[0].PlayerId,
+	})
+	require.Error(t, err)
+	require.Equal(t, codes.Unauthenticated, status.Code(err))
+}
+
 func TestGetAuthKeyRejectsMissingScope(t *testing.T) {
 	svc := newMihomoAccountServiceForTest(t)
 	bindResp := bindCredentialForServiceTest(t, svc)
