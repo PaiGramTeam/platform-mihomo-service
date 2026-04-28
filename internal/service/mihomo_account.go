@@ -49,11 +49,15 @@ func (s *MihomoAccountService) BindCredential(ctx context.Context, req *v1.BindC
 		return nil, status.Error(codes.InvalidArgument, "request is required")
 	}
 
-	claims, err := s.verifyServiceTicket(req.GetServiceTicket())
+	claims, err := s.verifyServiceTicket(ctx, req.GetServiceTicket())
 	if err != nil {
 		return nil, err
 	}
-	if _, err := scopedGuard(claims, usecase.ActionCredentialBind); err != nil {
+	guard, err := scopedGuard(claims, usecase.ActionCredentialBind)
+	if err != nil {
+		return nil, mapUsecaseError(err)
+	}
+	if err := guard.RequireBindingWide(); err != nil {
 		return nil, mapUsecaseError(err)
 	}
 
@@ -70,11 +74,15 @@ func (s *MihomoAccountService) GetCredentialStatus(ctx context.Context, req *v1.
 		return nil, status.Error(codes.InvalidArgument, "request is required")
 	}
 
-	claims, err := s.verifyServiceTicket(req.GetServiceTicket())
+	claims, err := s.verifyServiceTicket(ctx, req.GetServiceTicket())
 	if err != nil {
 		return nil, err
 	}
-	if _, err := scopedGuardForPlatformAccount(claims, req.GetPlatformAccountId(), usecase.ActionStatusRead); err != nil {
+	guard, err := scopedGuardForPlatformAccount(claims, req.GetPlatformAccountId(), usecase.ActionStatusRead)
+	if err != nil {
+		return nil, mapUsecaseError(err)
+	}
+	if err := guard.RequireBindingWide(); err != nil {
 		return nil, mapUsecaseError(err)
 	}
 
@@ -94,11 +102,15 @@ func (s *MihomoAccountService) ValidateCredential(ctx context.Context, req *v1.V
 		return nil, status.Error(codes.InvalidArgument, "request is required")
 	}
 
-	claims, err := s.verifyServiceTicket(req.GetServiceTicket())
+	claims, err := s.verifyServiceTicket(ctx, req.GetServiceTicket())
 	if err != nil {
 		return nil, err
 	}
-	if _, err := scopedGuardForPlatformAccount(claims, req.GetPlatformAccountId(), usecase.ActionStatusRead); err != nil {
+	guard, err := scopedGuardForPlatformAccount(claims, req.GetPlatformAccountId(), usecase.ActionStatusRead)
+	if err != nil {
+		return nil, mapUsecaseError(err)
+	}
+	if err := guard.RequireBindingWide(); err != nil {
 		return nil, mapUsecaseError(err)
 	}
 
@@ -115,7 +127,7 @@ func (s *MihomoAccountService) RefreshCredential(ctx context.Context, req *v1.Re
 		return nil, status.Error(codes.InvalidArgument, "request is required")
 	}
 
-	claims, err := s.verifyServiceTicket(req.GetServiceTicket())
+	claims, err := s.verifyServiceTicket(ctx, req.GetServiceTicket())
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +152,7 @@ func (s *MihomoAccountService) ListProfiles(ctx context.Context, req *v1.ListPro
 		return nil, status.Error(codes.InvalidArgument, "request is required")
 	}
 
-	claims, err := s.verifyServiceTicket(req.GetServiceTicket())
+	claims, err := s.verifyServiceTicket(ctx, req.GetServiceTicket())
 	if err != nil {
 		return nil, err
 	}
@@ -163,7 +175,7 @@ func (s *MihomoAccountService) GetPrimaryProfile(ctx context.Context, req *v1.Ge
 		return nil, status.Error(codes.InvalidArgument, "request is required")
 	}
 
-	claims, err := s.verifyServiceTicket(req.GetServiceTicket())
+	claims, err := s.verifyServiceTicket(ctx, req.GetServiceTicket())
 	if err != nil {
 		return nil, err
 	}
@@ -186,7 +198,7 @@ func (s *MihomoAccountService) GetAuthKey(ctx context.Context, req *v1.GetAuthKe
 		return nil, status.Error(codes.InvalidArgument, "request is required")
 	}
 
-	claims, err := s.verifyServiceTicket(req.GetServiceTicket())
+	claims, err := s.verifyServiceTicket(ctx, req.GetServiceTicket())
 	if err != nil {
 		return nil, err
 	}
@@ -211,7 +223,7 @@ func (s *MihomoAccountService) GetCredentialSummary(ctx context.Context, req *v1
 		return nil, status.Error(codes.InvalidArgument, "request is required")
 	}
 
-	claims, err := s.verifyServiceTicket(req.GetServiceTicket())
+	claims, err := s.verifyServiceTicket(ctx, req.GetServiceTicket())
 	if err != nil {
 		return nil, err
 	}
@@ -234,7 +246,7 @@ func (s *MihomoAccountService) UpdateCredential(ctx context.Context, req *v1.Upd
 		return nil, status.Error(codes.InvalidArgument, "request is required")
 	}
 
-	claims, err := s.verifyServiceTicket(req.GetServiceTicket())
+	claims, err := s.verifyServiceTicket(ctx, req.GetServiceTicket())
 	if err != nil {
 		return nil, err
 	}
@@ -274,7 +286,7 @@ func (s *MihomoAccountService) DeleteCredential(ctx context.Context, req *v1.Del
 		return nil, status.Error(codes.InvalidArgument, "request is required")
 	}
 
-	claims, err := s.verifyServiceTicket(req.GetServiceTicket())
+	claims, err := s.verifyServiceTicket(ctx, req.GetServiceTicket())
 	if err != nil {
 		return nil, err
 	}
@@ -294,11 +306,15 @@ func (s *MihomoAccountService) UpsertDevice(ctx context.Context, req *v1.UpsertD
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "request is required")
 	}
-	claims, err := s.verifyServiceTicket(req.GetServiceTicket())
+	claims, err := s.verifyServiceTicket(ctx, req.GetServiceTicket())
 	if err != nil {
 		return nil, err
 	}
-	if _, err := scopedGuardForPlatformAccount(claims, req.GetPlatformAccountId(), usecase.ActionDeviceUpdate); err != nil {
+	guard, err := scopedGuardForPlatformAccount(claims, req.GetPlatformAccountId(), usecase.ActionDeviceUpdate)
+	if err != nil {
+		return nil, mapUsecaseError(err)
+	}
+	if err := guard.RequireBindingWide(); err != nil {
 		return nil, mapUsecaseError(err)
 	}
 	device := req.GetDevice()
@@ -315,12 +331,15 @@ func (s *MihomoAccountService) ConfirmPrimaryProfile(ctx context.Context, req *v
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "request is required")
 	}
-	claims, err := s.verifyServiceTicket(req.GetServiceTicket())
+	claims, err := s.verifyServiceTicket(ctx, req.GetServiceTicket())
 	if err != nil {
 		return nil, err
 	}
 	guard, err := scopedGuardForPlatformAccount(claims, req.GetPlatformAccountId(), usecase.ActionProfileWrite)
 	if err != nil {
+		return nil, mapUsecaseError(err)
+	}
+	if err := guard.RequireBindingWide(); err != nil {
 		return nil, mapUsecaseError(err)
 	}
 	profile, err := s.profileUC.ConfirmPrimaryProfileWithScope(ctx, guard, req.GetPlatformAccountId(), req.GetPlayerId())
@@ -330,13 +349,20 @@ func (s *MihomoAccountService) ConfirmPrimaryProfile(ctx context.Context, req *v
 	return &v1.ConfirmPrimaryProfileResponse{Profile: profile}, nil
 }
 
-func (s *MihomoAccountService) verifyServiceTicket(raw string) (*biz.ServiceTicketClaims, error) {
-	claims, err := s.ticketVerifier.Verify(raw, serviceTicketAudience)
+func (s *MihomoAccountService) verifyServiceTicket(ctx context.Context, raw string) (*biz.ServiceTicketClaims, error) {
+	claims, err := s.ticketVerifier.VerifyContext(ctx, raw, serviceTicketAudience)
 	if err != nil {
-		return nil, status.Error(codes.Unauthenticated, "invalid service ticket")
+		return nil, mapTicketVerificationError(err)
 	}
 
 	return claims, nil
+}
+
+func mapTicketVerificationError(err error) error {
+	if errors.Is(err, data.ErrGrantVersionRevoked) {
+		return status.Error(codes.PermissionDenied, err.Error())
+	}
+	return status.Error(codes.Unauthenticated, "invalid service ticket")
 }
 
 func mapUsecaseError(err error) error {

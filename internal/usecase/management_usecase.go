@@ -86,7 +86,36 @@ func (uc *ManagementUsecase) GetCredentialSummaryWithScope(ctx context.Context, 
 	if err := guard.RequireBindingWide(); err != nil {
 		return nil, err
 	}
-	return uc.GetCredentialSummary(ctx, platformAccountID)
+	credential, err := uc.credentials.GetByBindingID(ctx, guard.BindingID)
+	if err != nil {
+		return nil, err
+	}
+	if credential == nil {
+		return nil, ErrCredentialNotFound
+	}
+	if credential.PlatformAccountID != platformAccountID {
+		return nil, ErrPlatformAccountMismatch
+	}
+	devices, err := uc.devices.ListByBindingID(ctx, guard.BindingID)
+	if err != nil {
+		return nil, err
+	}
+	profiles, err := uc.profiles.ListByBindingID(ctx, guard.BindingID)
+	if err != nil {
+		return nil, err
+	}
+	summaries := make([]*v1.ProfileSummary, 0, len(profiles))
+	for _, profile := range profiles {
+		summaries = append(summaries, toProfileSummary(profile))
+	}
+	return &CredentialSummaryOutput{
+		PlatformAccountID: credential.PlatformAccountID,
+		Status:            toCredentialStatus(credential.Status),
+		LastValidatedAt:   credential.LastValidatedAt,
+		LastRefreshedAt:   credential.LastRefreshedAt,
+		Devices:           devices,
+		Profiles:          summaries,
+	}, nil
 }
 
 type UpdateCredentialInput struct {
@@ -149,7 +178,17 @@ func (uc *ManagementUsecase) DeleteCredentialWithScope(ctx context.Context, guar
 	if err := guard.RequireBindingWide(); err != nil {
 		return err
 	}
-	return uc.DeleteCredential(ctx, platformAccountID)
+	credential, err := uc.credentials.GetByBindingID(ctx, guard.BindingID)
+	if err != nil {
+		return err
+	}
+	if credential == nil {
+		return ErrCredentialNotFound
+	}
+	if credential.PlatformAccountID != platformAccountID {
+		return ErrPlatformAccountMismatch
+	}
+	return uc.management.DeleteCredentialGraphByBindingID(ctx, guard.BindingID)
 }
 
 func (uc *ManagementUsecase) pruneStaleProfiles(ctx context.Context, platformAccountID string, profiles []v1.ProfileSummary) error {
@@ -158,5 +197,9 @@ func (uc *ManagementUsecase) pruneStaleProfiles(ctx context.Context, platformAcc
 		profile := &profiles[i]
 		keep = append(keep, biz.ProfileIdentity{PlayerID: profile.PlayerId, Region: profile.Region})
 	}
-	return uc.profiles.DeleteMissingByPlatformAccountID(ctx, platformAccountID, keep)
+	bindingID, err := BindingIDFromPlatformAccountID(platformAccountID)
+	if err != nil {
+		return err
+	}
+	return uc.profiles.DeleteMissingByBindingID(ctx, bindingID, keep)
 }

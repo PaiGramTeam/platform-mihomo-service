@@ -6,6 +6,10 @@ github.com/PaiGramTeam/proto-contracts v0.0.0-20260416033414-4016470bc78d h1:sRl
 github.com/PaiGramTeam/proto-contracts v0.0.0-20260416033414-4016470bc78d/go.mod h1:i5FW0tHMyzubj1qI/7e04arFyrDv3YXkK1Pu5UxejBI=
 github.com/PaiGramTeam/proto-contracts v0.0.0-20260419070719-80366e162dcf h1:Wa77pOdHqp/wtil+DecjMvAOZ0rlLczTu4/Wqi17Cjw=
 github.com/PaiGramTeam/proto-contracts v0.0.0-20260419070719-80366e162dcf/go.mod h1:i5FW0tHMyzubj1qI/7e04arFyrDv3YXkK1Pu5UxejBI=
+github.com/PaiGramTeam/proto-contracts v0.0.0-20260428062016-25b0c943e834 h1:M27OVIoKxzalKV0KoXy0N3uhFx/ET+5u9TDH1uSnkdA=
+github.com/PaiGramTeam/proto-contracts v0.0.0-20260428062016-25b0c943e834/go.mod h1:i5FW0tHMyzubj1qI/7e04arFyrDv3YXkK1Pu5UxejBI=
+github.com/PaiGramTeam/proto-contracts v0.0.0-20260428073339-584460d9cb18 h1:Oo5oWLHn8Ca/rTofJH/7HEMT+Z36c2JQDO/13vycdo4=
+github.com/PaiGramTeam/proto-contracts v0.0.0-20260428073339-584460d9cb18/go.mod h1:i5FW0tHMyzubj1qI/7e04arFyrDv3YXkK1Pu5UxejBI=
 github.com/bsm/ginkgo/v2 v2.12.0 h1:Ny8MWAHyOepLGlLKYmXG4IEkioBysk6GpaRTLC8zwWs=
 github.com/bsm/ginkgo/v2 v2.12.0/go.mod h1:SwYbGRRDovPVboqFv0tPTcG1sN61LM1Z4ARdbAV9g4c=
 github.com/bsm/gomega v1.27.10 h1:yeMWxP2pV2fG3FgAODIY8EiRE3dy0aeFYt4l7wh6yKA=

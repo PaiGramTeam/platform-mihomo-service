@@ -88,7 +88,20 @@ func newRepoTestDB(t *testing.T) *gorm.DB {
 		is_default NUMERIC NOT NULL DEFAULT 0,
 		discovered_at DATETIME NOT NULL,
 		updated_at DATETIME NULL,
-		UNIQUE(platform_account_id, player_id, region)
+		UNIQUE(binding_id, player_id, region)
+	)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE device_records (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		binding_id INTEGER NOT NULL,
+		platform_account_id TEXT NOT NULL,
+		device_id TEXT NOT NULL,
+		device_fp TEXT NOT NULL,
+		device_name TEXT NULL,
+		is_valid NUMERIC NOT NULL DEFAULT 1,
+		last_seen_at DATETIME NULL,
+		created_at DATETIME NULL,
+		updated_at DATETIME NULL,
+		UNIQUE(binding_id, device_id)
 	)`).Error)
 	return db
 }

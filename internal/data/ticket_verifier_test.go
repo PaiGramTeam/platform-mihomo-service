@@ -1,6 +1,7 @@
 package data
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -25,6 +26,7 @@ func TestVerifyAcceptsBindingAwareClaims(t *testing.T) {
 		"platform":            "mihomo",
 		"platform_account_id": "binding_101_10001",
 		"consumer":            "paigram",
+		"grant_version":       float64(2),
 		"profile_id":          float64(1001),
 		"scopes":              []string{"mihomo.profile.read"},
 	})
@@ -38,6 +40,7 @@ func TestVerifyAcceptsBindingAwareClaims(t *testing.T) {
 	require.Equal(t, "mihomo", claims.Platform)
 	require.Equal(t, "binding_101_10001", claims.PlatformAccountID)
 	require.Equal(t, "paigram", claims.Consumer)
+	require.Equal(t, uint64(2), claims.GrantVersion)
 	require.Equal(t, uint64(1001), claims.ProfileID)
 	require.Equal(t, []string{"mihomo.profile.read"}, claims.Scopes)
 	require.Equal(t, testTicketAudience, claims.Audience)
@@ -54,6 +57,7 @@ func TestVerifyNormalizesAllowedActionsClaim(t *testing.T) {
 		"platform":            "mihomo",
 		"platform_account_id": "binding_101_10001",
 		"consumer":            "paigram",
+		"grant_version":       float64(2),
 		"allowed_actions":     []string{"mihomo.profile.read", "mihomo.profile.write"},
 	})
 
@@ -72,6 +76,7 @@ func TestVerifyPrefersAllowedActionsOverScopes(t *testing.T) {
 		"platform":            "mihomo",
 		"platform_account_id": "binding_101_10001",
 		"consumer":            "paigram",
+		"grant_version":       float64(2),
 		"scopes":              []string{"mihomo.profile.read"},
 		"allowed_actions":     []string{"mihomo.profile.write"},
 	})
@@ -89,6 +94,7 @@ func TestVerifyRejectsMissingBindingID(t *testing.T) {
 		"owner_user_id": float64(1),
 		"platform":      "mihomo",
 		"consumer":      "paigram",
+		"grant_version": float64(2),
 		"scopes":        []string{"mihomo.profile.read"},
 	})
 
@@ -104,11 +110,68 @@ func TestVerifyRejectsConsumerActorWithoutConsumerClaim(t *testing.T) {
 		"owner_user_id": float64(1),
 		"binding_id":    float64(101),
 		"platform":      "mihomo",
+		"grant_version": float64(2),
 		"scopes":        []string{"mihomo.profile.read"},
 	})
 
 	_, err := verifier.Verify(raw, testTicketAudience)
 	require.ErrorContains(t, err, "consumer")
+}
+
+func TestVerifyRejectsConsumerActorWithoutGrantVersionClaim(t *testing.T) {
+	verifier := NewTicketVerifier(testTicketIssuer, testTicketSigningKey)
+	raw := issueTestTicket(t, map[string]any{
+		"actor_type":    "consumer",
+		"actor_id":      "user-1",
+		"owner_user_id": float64(1),
+		"binding_id":    float64(101),
+		"platform":      "mihomo",
+		"consumer":      "paigram",
+		"scopes":        []string{"mihomo.profile.read"},
+	})
+
+	_, err := verifier.Verify(raw, testTicketAudience)
+	require.ErrorContains(t, err, "grant_version")
+}
+
+func TestVerifyAllowsUserAndAdminActorsWithoutGrantVersionClaim(t *testing.T) {
+	for _, actorType := range []string{"user", "admin"} {
+		t.Run(actorType, func(t *testing.T) {
+			verifier := NewTicketVerifier(testTicketIssuer, testTicketSigningKey)
+			raw := issueTestTicket(t, map[string]any{
+				"actor_type":    actorType,
+				"actor_id":      actorType + "-1",
+				"owner_user_id": float64(1),
+				"binding_id":    float64(101),
+				"platform":      "mihomo",
+				"scopes":        []string{"mihomo.profile.read"},
+			})
+
+			claims, err := verifier.Verify(raw, testTicketAudience)
+			require.NoError(t, err)
+			require.Equal(t, actorType, claims.ActorType)
+		})
+	}
+}
+
+func TestVerifyContextRejectsStaleConsumerGrantVersion(t *testing.T) {
+	lookup := &fakeGrantVersionLookup{minimum: 5}
+	verifier := NewTicketVerifier(testTicketIssuer, testTicketSigningKey).WithGrantVersionLookup(lookup)
+	raw := issueTestTicket(t, map[string]any{
+		"actor_type":    "consumer",
+		"actor_id":      "user-1",
+		"owner_user_id": float64(1),
+		"binding_id":    float64(101),
+		"platform":      "mihomo",
+		"consumer":      "paigram",
+		"grant_version": float64(4),
+		"scopes":        []string{"mihomo.profile.read"},
+	})
+
+	_, err := verifier.VerifyContext(context.Background(), raw, testTicketAudience)
+	require.ErrorContains(t, err, "grant version revoked")
+	require.Equal(t, uint64(101), lookup.bindingID)
+	require.Equal(t, "paigram", lookup.consumer)
 }
 
 func TestVerifyAllowsNonConsumerActorTypesWithoutConsumerClaim(t *testing.T) {
@@ -136,11 +199,24 @@ func TestVerifyRejectsMismatchedLegacyPlatformAccountRefID(t *testing.T) {
 		"binding_id":              float64(101),
 		"platform":                "mihomo",
 		"consumer":                "paigram",
+		"grant_version":           float64(2),
 		"platform_account_ref_id": float64(202),
 	})
 
 	_, err := verifier.Verify(raw, testTicketAudience)
 	require.ErrorContains(t, err, "binding_id does not match platform_account_ref_id")
+}
+
+type fakeGrantVersionLookup struct {
+	minimum   uint64
+	bindingID uint64
+	consumer  string
+}
+
+func (f *fakeGrantVersionLookup) MinimumVersion(_ context.Context, bindingID uint64, consumer string) (uint64, error) {
+	f.bindingID = bindingID
+	f.consumer = consumer
+	return f.minimum, nil
 }
 
 func issueTestTicket(t *testing.T, claims map[string]any) string {

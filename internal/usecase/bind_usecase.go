@@ -158,6 +158,7 @@ func (uc *BindUsecase) bindPreparedCredential(ctx context.Context, input BindCre
 	}()
 
 	device := &biz.Device{
+		BindingID:         input.BindingID,
 		PlatformAccountID: prepared.platformAccountID,
 		DeviceID:          input.DeviceID,
 		DeviceFP:          input.DeviceFP,
@@ -224,6 +225,7 @@ func (uc *BindUsecase) UpsertDevice(ctx context.Context, platformAccountID strin
 	}
 
 	device := &biz.Device{
+		BindingID:         credential.BindingID,
 		PlatformAccountID: platformAccountID,
 		DeviceID:          deviceID,
 		DeviceFP:          deviceFP,

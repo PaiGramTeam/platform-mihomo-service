@@ -179,6 +179,43 @@ func TestRefreshCredentialRejectsProfileScopedTicket(t *testing.T) {
 	require.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
+func TestGetCredentialStatusRejectsProfileScopedTicket(t *testing.T) {
+	svc := newMihomoAccountServiceForTest(t)
+	bindResp := bindCredentialForServiceTest(t, svc)
+
+	_, err := svc.GetCredentialStatus(context.Background(), &v1.GetCredentialStatusRequest{
+		ServiceTicket:     signedServiceTicketForProfile(t, bindResp.PlatformAccountId, 999, "mihomo.status.read"),
+		PlatformAccountId: bindResp.PlatformAccountId,
+	})
+	require.Error(t, err)
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
+func TestValidateCredentialRejectsProfileScopedTicket(t *testing.T) {
+	svc := newMihomoAccountServiceForTest(t)
+	bindResp := bindCredentialForServiceTest(t, svc)
+
+	_, err := svc.ValidateCredential(context.Background(), &v1.ValidateCredentialRequest{
+		ServiceTicket:     signedServiceTicketForProfile(t, bindResp.PlatformAccountId, 999, "mihomo.status.read"),
+		PlatformAccountId: bindResp.PlatformAccountId,
+	})
+	require.Error(t, err)
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
+func TestUpsertDeviceRejectsProfileScopedTicket(t *testing.T) {
+	svc := newMihomoAccountServiceForTest(t)
+	bindResp := bindCredentialForServiceTest(t, svc)
+
+	_, err := svc.UpsertDevice(context.Background(), &v1.UpsertDeviceRequest{
+		ServiceTicket:     signedServiceTicketForProfile(t, bindResp.PlatformAccountId, 999, "mihomo.device.update"),
+		PlatformAccountId: bindResp.PlatformAccountId,
+		Device:            &v1.DeviceInfo{DeviceId: "aaaaaaaa-1234-1234-1234-123456789abc", DeviceFp: "bbbbbbbbbbbbbb"},
+	})
+	require.Error(t, err)
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
 func TestConfirmPrimaryProfileRejectsUnknownPlayerID(t *testing.T) {
 	svc := newMihomoAccountServiceForTest(t)
 	bindResp, err := svc.BindCredential(context.Background(), &v1.BindCredentialRequest{
@@ -242,6 +279,18 @@ func TestBindCredentialRejectsMissingScope(t *testing.T) {
 
 	_, err := svc.BindCredential(context.Background(), &v1.BindCredentialRequest{
 		ServiceTicket:    signedServiceTicketForAccount(t, ""),
+		CookieBundleJson: `{"account_id":"10001","cookie_token":"abc"}`,
+		Device:           &v1.DeviceInfo{DeviceId: "device-1", DeviceFp: "fp-1", DeviceName: "iPhone"},
+	})
+	require.Error(t, err)
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
+func TestBindCredentialRejectsProfileScopedTicket(t *testing.T) {
+	svc := newMihomoAccountServiceForTest(t)
+
+	_, err := svc.BindCredential(context.Background(), &v1.BindCredentialRequest{
+		ServiceTicket:    signedServiceTicketForProfile(t, "mihomo:101", 999, "mihomo.credential.bind"),
 		CookieBundleJson: `{"account_id":"10001","cookie_token":"abc"}`,
 		Device:           &v1.DeviceInfo{DeviceId: "device-1", DeviceFp: "fp-1", DeviceName: "iPhone"},
 	})
@@ -393,6 +442,19 @@ func TestConfirmPrimaryProfileRejectsReadOnlyScope(t *testing.T) {
 
 	_, err := svc.ConfirmPrimaryProfile(context.Background(), &v1.ConfirmPrimaryProfileRequest{
 		ServiceTicket:     signedServiceTicketForAccount(t, bindResp.PlatformAccountId, "mihomo.profile.read"),
+		PlatformAccountId: bindResp.PlatformAccountId,
+		PlayerId:          bindResp.Profiles[0].PlayerId,
+	})
+	require.Error(t, err)
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
+func TestConfirmPrimaryProfileRejectsProfileScopedTicket(t *testing.T) {
+	svc := newMihomoAccountServiceForTest(t)
+	bindResp := bindCredentialForServiceTest(t, svc)
+
+	_, err := svc.ConfirmPrimaryProfile(context.Background(), &v1.ConfirmPrimaryProfileRequest{
+		ServiceTicket:     signedServiceTicketForProfile(t, bindResp.PlatformAccountId, 1001, "mihomo.profile.write"),
 		PlatformAccountId: bindResp.PlatformAccountId,
 		PlayerId:          bindResp.Profiles[0].PlayerId,
 	})
@@ -611,20 +673,33 @@ func newMemoryManagementRepo(
 }
 
 func (r *memoryManagementRepo) DeleteCredentialGraph(_ context.Context, platformAccountID string) error {
-	if credential := r.credentialRepo.byPlatformAccountID[platformAccountID]; credential != nil {
-		delete(r.credentialRepo.byBindingID, credential.BindingID)
-	}
-	delete(r.credentialRepo.byPlatformAccountID, platformAccountID)
-	delete(r.deviceRepo.byPlatformAccountID, platformAccountID)
-	if profiles := r.profileRepo.byPlatformAccountID[platformAccountID]; len(profiles) > 0 {
-		delete(r.profileRepo.byBindingID, profiles[0].BindingID)
-	}
-	delete(r.profileRepo.byPlatformAccountID, platformAccountID)
+	_ = r.credentialRepo.DeleteByPlatformAccountID(context.Background(), platformAccountID)
+	_ = r.deviceRepo.DeleteByPlatformAccountID(context.Background(), platformAccountID)
+	_ = r.profileRepo.DeleteByPlatformAccountID(context.Background(), platformAccountID)
 	for key, artifact := range r.artifactRepo.artifacts {
 		if artifact.PlatformAccountID == platformAccountID {
 			delete(r.artifactRepo.artifacts, key)
 		}
 	}
+	return nil
+}
+
+func (r *memoryManagementRepo) DeleteCredentialGraphByBindingID(_ context.Context, bindingID uint64) error {
+	credential := r.credentialRepo.byBindingID[bindingID]
+	if credential != nil {
+		delete(r.credentialRepo.byPlatformAccountID, credential.PlatformAccountID)
+		for key, artifact := range r.artifactRepo.artifacts {
+			if artifact.PlatformAccountID == credential.PlatformAccountID {
+				delete(r.artifactRepo.artifacts, key)
+			}
+		}
+	}
+	delete(r.credentialRepo.byBindingID, bindingID)
+	_ = r.deviceRepo.DeleteByBindingID(context.Background(), bindingID)
+	for _, profile := range r.profileRepo.byBindingID[bindingID] {
+		delete(r.profileRepo.byPlatformAccountID, profile.PlatformAccountID)
+	}
+	delete(r.profileRepo.byBindingID, bindingID)
 	return nil
 }
 
@@ -677,25 +752,49 @@ func (r *memoryCredentialRepo) DeleteByPlatformAccountID(_ context.Context, plat
 
 type memoryDeviceRepo struct {
 	byPlatformAccountID map[string][]*biz.Device
+	byBindingID         map[uint64][]*biz.Device
 }
 
 func newMemoryDeviceRepo() *memoryDeviceRepo {
-	return &memoryDeviceRepo{byPlatformAccountID: make(map[string][]*biz.Device)}
+	return &memoryDeviceRepo{
+		byPlatformAccountID: make(map[string][]*biz.Device),
+		byBindingID:         make(map[uint64][]*biz.Device),
+	}
 }
 
 func (r *memoryDeviceRepo) Save(_ context.Context, device *biz.Device) error {
 	clone := *device
 	current := r.byPlatformAccountID[device.PlatformAccountID]
+	byBinding := r.byBindingID[device.BindingID]
 	for index, existing := range current {
 		if existing.DeviceID == device.DeviceID {
 			current[index] = &clone
 			r.byPlatformAccountID[device.PlatformAccountID] = current
+			for bindingIndex, bindingDevice := range byBinding {
+				if bindingDevice.DeviceID == device.DeviceID {
+					byBinding[bindingIndex] = &clone
+					r.byBindingID[device.BindingID] = byBinding
+					return nil
+				}
+			}
 			return nil
 		}
 	}
 
 	r.byPlatformAccountID[device.PlatformAccountID] = append(current, &clone)
+	r.byBindingID[device.BindingID] = append(byBinding, &clone)
 	return nil
+}
+
+func (r *memoryDeviceRepo) ListByBindingID(_ context.Context, bindingID uint64) ([]*biz.Device, error) {
+	devices := r.byBindingID[bindingID]
+	result := make([]*biz.Device, 0, len(devices))
+	for _, device := range devices {
+		clone := *device
+		result = append(result, &clone)
+	}
+
+	return result, nil
 }
 
 func (r *memoryDeviceRepo) ListByPlatformAccountID(_ context.Context, platformAccountID string) ([]*biz.Device, error) {
@@ -710,7 +809,30 @@ func (r *memoryDeviceRepo) ListByPlatformAccountID(_ context.Context, platformAc
 }
 
 func (r *memoryDeviceRepo) DeleteByPlatformAccountID(_ context.Context, platformAccountID string) error {
+	if devices := r.byPlatformAccountID[platformAccountID]; len(devices) > 0 {
+		bindingID := devices[0].BindingID
+		current := r.byBindingID[bindingID]
+		filtered := make([]*biz.Device, 0, len(current))
+		for _, device := range current {
+			if device.PlatformAccountID != platformAccountID {
+				filtered = append(filtered, device)
+			}
+		}
+		if len(filtered) == 0 {
+			delete(r.byBindingID, bindingID)
+		} else {
+			r.byBindingID[bindingID] = filtered
+		}
+	}
 	delete(r.byPlatformAccountID, platformAccountID)
+	return nil
+}
+
+func (r *memoryDeviceRepo) DeleteByBindingID(_ context.Context, bindingID uint64) error {
+	for _, device := range r.byBindingID[bindingID] {
+		delete(r.byPlatformAccountID, device.PlatformAccountID)
+	}
+	delete(r.byBindingID, bindingID)
 	return nil
 }
 
@@ -772,9 +894,35 @@ func (r *memoryProfileRepo) ListByPlatformAccountID(_ context.Context, platformA
 	return result, nil
 }
 
+func (r *memoryProfileRepo) SetDefaultByBindingAndPlayerID(_ context.Context, bindingID uint64, platformAccountID string, playerID string) error {
+	for _, profile := range r.byPlatformAccountID[platformAccountID] {
+		if profile.BindingID == bindingID {
+			profile.IsDefault = profile.PlayerID == playerID
+		}
+	}
+	for _, profile := range r.byBindingID[bindingID] {
+		if profile.PlatformAccountID == platformAccountID {
+			profile.IsDefault = profile.PlayerID == playerID
+		}
+	}
+	return nil
+}
+
 func (r *memoryProfileRepo) DeleteByPlatformAccountID(_ context.Context, platformAccountID string) error {
 	if profiles := r.byPlatformAccountID[platformAccountID]; len(profiles) > 0 {
-		delete(r.byBindingID, profiles[0].BindingID)
+		bindingID := profiles[0].BindingID
+		current := r.byBindingID[bindingID]
+		filtered := make([]*biz.Profile, 0, len(current))
+		for _, profile := range current {
+			if profile.PlatformAccountID != platformAccountID {
+				filtered = append(filtered, profile)
+			}
+		}
+		if len(filtered) == 0 {
+			delete(r.byBindingID, bindingID)
+		} else {
+			r.byBindingID[bindingID] = filtered
+		}
 	}
 	delete(r.byPlatformAccountID, platformAccountID)
 	return nil
@@ -782,6 +930,10 @@ func (r *memoryProfileRepo) DeleteByPlatformAccountID(_ context.Context, platfor
 
 func (r *memoryProfileRepo) DeleteMissingByPlatformAccountID(_ context.Context, platformAccountID string, keep []biz.ProfileIdentity) error {
 	profiles := r.byPlatformAccountID[platformAccountID]
+	if len(profiles) == 0 {
+		return nil
+	}
+	bindingID := profiles[0].BindingID
 	keepSet := make(map[string]struct{}, len(keep))
 	for _, identity := range keep {
 		keepSet[identity.PlayerID+":"+identity.Region] = struct{}{}
@@ -793,13 +945,58 @@ func (r *memoryProfileRepo) DeleteMissingByPlatformAccountID(_ context.Context, 
 		}
 	}
 	r.byPlatformAccountID[platformAccountID] = filtered
-	if len(filtered) == 0 {
-		if len(profiles) > 0 {
-			delete(r.byBindingID, profiles[0].BindingID)
+	current := r.byBindingID[bindingID]
+	filteredByBinding := make([]*biz.Profile, 0, len(current))
+	for _, profile := range current {
+		if profile.PlatformAccountID != platformAccountID {
+			filteredByBinding = append(filteredByBinding, profile)
+			continue
 		}
-		return nil
+		if _, ok := keepSet[profile.PlayerID+":"+profile.Region]; ok {
+			filteredByBinding = append(filteredByBinding, profile)
+		}
 	}
-	r.byBindingID[filtered[0].BindingID] = filtered
+	if len(filteredByBinding) == 0 {
+		delete(r.byBindingID, bindingID)
+	} else {
+		r.byBindingID[bindingID] = filteredByBinding
+	}
+	if len(filtered) == 0 {
+		delete(r.byPlatformAccountID, platformAccountID)
+	}
+	return nil
+}
+
+func (r *memoryProfileRepo) DeleteMissingByBindingID(_ context.Context, bindingID uint64, keep []biz.ProfileIdentity) error {
+	profiles := r.byBindingID[bindingID]
+	keepSet := make(map[string]struct{}, len(keep))
+	for _, identity := range keep {
+		keepSet[identity.PlayerID+":"+identity.Region] = struct{}{}
+	}
+	filtered := make([]*biz.Profile, 0, len(profiles))
+	for _, profile := range profiles {
+		if _, ok := keepSet[profile.PlayerID+":"+profile.Region]; ok {
+			filtered = append(filtered, profile)
+		}
+	}
+	r.byBindingID[bindingID] = filtered
+	for platformAccountID, platformProfiles := range r.byPlatformAccountID {
+		filteredByAccount := platformProfiles[:0]
+		for _, profile := range platformProfiles {
+			if profile.BindingID != bindingID {
+				filteredByAccount = append(filteredByAccount, profile)
+				continue
+			}
+			if _, ok := keepSet[profile.PlayerID+":"+profile.Region]; ok {
+				filteredByAccount = append(filteredByAccount, profile)
+			}
+		}
+		if len(filteredByAccount) == 0 {
+			delete(r.byPlatformAccountID, platformAccountID)
+		} else {
+			r.byPlatformAccountID[platformAccountID] = filteredByAccount
+		}
+	}
 	return nil
 }
 
