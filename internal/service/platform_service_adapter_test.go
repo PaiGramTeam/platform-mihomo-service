@@ -64,6 +64,36 @@ func TestGenericPlatformServiceInvalidateConsumerGrantRejectsMissingScope(t *tes
 	require.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
+func TestGenericPlatformServiceInvalidateConsumerGrantRejectsCrossPlatformTicket(t *testing.T) {
+	store := newMemoryGrantInvalidationStore()
+	adapter := newGenericPlatformServiceForAdapterTest(store)
+
+	_, err := adapter.InvalidateConsumerGrant(context.Background(), &platformv1.InvalidateConsumerGrantRequest{
+		ServiceTicket:       signedAdapterServiceTicket(t, adapterTicketOptions{ActorType: "admin", Platform: "starrail", Scopes: []string{"mihomo.consumer_grant.invalidate"}}),
+		BindingId:           101,
+		Consumer:            "paimon-bot",
+		MinimumGrantVersion: 2,
+	})
+
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+	require.Empty(t, store.minimums)
+}
+
+func TestGenericPlatformServiceInvalidateConsumerGrantRejectsProfileScopedTicket(t *testing.T) {
+	store := newMemoryGrantInvalidationStore()
+	adapter := newGenericPlatformServiceForAdapterTest(store)
+
+	_, err := adapter.InvalidateConsumerGrant(context.Background(), &platformv1.InvalidateConsumerGrantRequest{
+		ServiceTicket:       signedAdapterServiceTicket(t, adapterTicketOptions{ActorType: "admin", ProfileID: 1001, Scopes: []string{"mihomo.consumer_grant.invalidate"}}),
+		BindingId:           101,
+		Consumer:            "paimon-bot",
+		MinimumGrantVersion: 2,
+	})
+
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+	require.Empty(t, store.minimums)
+}
+
 func TestGenericPlatformServiceRejectsStaleConsumerTicketAfterGrantInvalidation(t *testing.T) {
 	store := newMemoryGrantInvalidationStore()
 	adapter := newGenericPlatformServiceForAdapterTest(store)
@@ -132,7 +162,9 @@ type adapterTicketOptions struct {
 	ActorType         string
 	Consumer          string
 	GrantVersion      uint64
+	Platform          string
 	PlatformAccountID string
+	ProfileID         uint64
 	Scopes            []string
 }
 
@@ -143,6 +175,10 @@ func signedAdapterServiceTicket(t *testing.T, opts adapterTicketOptions) string 
 	if actorType == "" {
 		actorType = "bot"
 	}
+	platform := opts.Platform
+	if platform == "" {
+		platform = "mihomo"
+	}
 	claims := jwt.MapClaims{
 		"iss":                  serviceTestIssuer,
 		"aud":                  []string{serviceTestAudience},
@@ -150,7 +186,7 @@ func signedAdapterServiceTicket(t *testing.T, opts adapterTicketOptions) string 
 		"actor_id":             actorType + "-paigram",
 		"owner_user_id":        float64(1),
 		"binding_id":           float64(101),
-		"platform":             "mihomo",
+		"platform":             platform,
 		"platform_service_key": serviceTestAudience,
 		"exp":                  time.Now().Add(time.Minute).Unix(),
 	}
@@ -162,6 +198,9 @@ func signedAdapterServiceTicket(t *testing.T, opts adapterTicketOptions) string 
 	}
 	if opts.PlatformAccountID != "" {
 		claims["platform_account_id"] = opts.PlatformAccountID
+	}
+	if opts.ProfileID != 0 {
+		claims["profile_id"] = float64(opts.ProfileID)
 	}
 	if len(opts.Scopes) > 0 {
 		claims["scopes"] = opts.Scopes

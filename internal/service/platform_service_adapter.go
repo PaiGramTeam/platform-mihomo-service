@@ -10,7 +10,6 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	mihomoapiv1 "platform-mihomo-service/api/mihomo/v1"
-	"platform-mihomo-service/internal/biz"
 	"platform-mihomo-service/internal/data"
 	"platform-mihomo-service/internal/usecase"
 )
@@ -234,8 +233,12 @@ func (s *GenericPlatformService) InvalidateConsumerGrant(ctx context.Context, re
 	if claims.BindingID != req.GetBindingId() {
 		return nil, status.Error(codes.PermissionDenied, "ticket binding_id does not match request")
 	}
-	if !claimHasScope(claims, consumerGrantInvalidateScope) {
-		return nil, status.Error(codes.PermissionDenied, "missing consumer grant invalidation scope")
+	guard, err := scopedGuard(claims, consumerGrantInvalidateScope)
+	if err != nil {
+		return nil, mapUsecaseError(err)
+	}
+	if err := guard.RequireBindingWide(); err != nil {
+		return nil, mapUsecaseError(err)
 	}
 	if s.invalidationRepo == nil {
 		return nil, status.Error(codes.Internal, "grant invalidation repo is not configured")
@@ -245,18 +248,6 @@ func (s *GenericPlatformService) InvalidateConsumerGrant(ctx context.Context, re
 	}
 
 	return &platformv1.InvalidateConsumerGrantResponse{Success: true}, nil
-}
-
-func claimHasScope(claims *biz.ServiceTicketClaims, scope string) bool {
-	if claims == nil {
-		return false
-	}
-	for _, candidate := range claims.Scopes {
-		if candidate == scope {
-			return true
-		}
-	}
-	return false
 }
 
 type genericCredentialPayload struct {

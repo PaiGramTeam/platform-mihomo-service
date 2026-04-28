@@ -28,7 +28,7 @@ func (s *MihomoCredentialService) GetCredentialSummary(ctx context.Context, req 
 		return nil, status.Error(codes.InvalidArgument, "request is required")
 	}
 
-	claims, err := s.ticketVerifier.Verify(req.GetServiceTicket(), serviceTicketAudience)
+	claims, err := s.ticketVerifier.VerifyContext(ctx, req.GetServiceTicket(), serviceTicketAudience)
 	if err != nil {
 		return nil, status.Error(codes.Unauthenticated, "invalid service ticket")
 	}
