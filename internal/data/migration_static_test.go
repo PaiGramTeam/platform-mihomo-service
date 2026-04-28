@@ -30,6 +30,16 @@ func TestBindingFirstMigrationPrechecksProfileDuplicatesBeforeDDL(t *testing.T) 
 	assertBeforeFirstAlter(t, normalized, firstAlter, "DUPLICATE ACCOUNT_PROFILES ROWS FOR BINDING_ID, PLAYER_ID, REGION")
 }
 
+func TestBindingFirstMigrationPrechecksDeviceBackfillBeforeDDL(t *testing.T) {
+	migration := readMigrationForStaticTest(t, "000006_binding_first_devices_profiles_and_grant_invalidations.up.sql")
+	normalized := normalizeSQLForStaticTest(migration)
+
+	firstAlter := strings.Index(normalized, "ALTER TABLE")
+	require.NotEqual(t, -1, firstAlter)
+
+	assertBeforeFirstAlter(t, normalized, firstAlter, "DEVICE_RECORDS ROWS CANNOT BE BACKFILLED FROM CREDENTIAL_RECORDS")
+}
+
 func TestBindingIDBackfillMigrationPrechecksLegacyAccountIDsBeforeDDL(t *testing.T) {
 	migration := readMigrationForStaticTest(t, "000005_add_binding_id_to_credentials_and_profiles.up.sql")
 	normalized := normalizeSQLForStaticTest(migration)

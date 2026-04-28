@@ -16,18 +16,11 @@ PREPARE profile_duplicate_precheck_stmt FROM @profile_duplicate_precheck;
 EXECUTE profile_duplicate_precheck_stmt;
 DEALLOCATE PREPARE profile_duplicate_precheck_stmt;
 
-ALTER TABLE device_records
-    ADD COLUMN binding_id BIGINT UNSIGNED NULL AFTER id;
-
-UPDATE device_records d
-JOIN credential_records c ON c.platform_account_id = d.platform_account_id
-SET d.binding_id = c.binding_id
-WHERE d.binding_id IS NULL;
-
 SET @device_backfill_failures = (
     SELECT COUNT(*)
-    FROM device_records
-    WHERE binding_id IS NULL
+    FROM device_records d
+    LEFT JOIN credential_records c ON c.platform_account_id = d.platform_account_id
+    WHERE c.id IS NULL
 );
 SET @device_backfill_precheck = IF(
     @device_backfill_failures > 0,
@@ -37,6 +30,14 @@ SET @device_backfill_precheck = IF(
 PREPARE device_backfill_precheck_stmt FROM @device_backfill_precheck;
 EXECUTE device_backfill_precheck_stmt;
 DEALLOCATE PREPARE device_backfill_precheck_stmt;
+
+ALTER TABLE device_records
+    ADD COLUMN binding_id BIGINT UNSIGNED NULL AFTER id;
+
+UPDATE device_records d
+JOIN credential_records c ON c.platform_account_id = d.platform_account_id
+SET d.binding_id = c.binding_id
+WHERE d.binding_id IS NULL;
 
 ALTER TABLE device_records
     MODIFY COLUMN binding_id BIGINT UNSIGNED NOT NULL,
