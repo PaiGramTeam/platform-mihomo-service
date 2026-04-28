@@ -4,17 +4,174 @@ import (
 	"context"
 	"net"
 	"testing"
+	"time"
 
 	platformv1 "github.com/PaiGramTeam/proto-contracts/platform/v1"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 
 	"platform-mihomo-service/internal/data"
 	platformmihomo "platform-mihomo-service/internal/platform/mihomo"
 	"platform-mihomo-service/internal/usecase"
 )
+
+func TestGenericPlatformServiceInvalidateConsumerGrantRejectsConsumerTicket(t *testing.T) {
+	store := newMemoryGrantInvalidationStore()
+	adapter := newGenericPlatformServiceForAdapterTest(store)
+
+	_, err := adapter.InvalidateConsumerGrant(context.Background(), &platformv1.InvalidateConsumerGrantRequest{
+		ServiceTicket:       signedAdapterServiceTicket(t, adapterTicketOptions{ActorType: "consumer", Consumer: "paimon-bot", GrantVersion: 1, Scopes: []string{"mihomo.consumer_grant.invalidate"}}),
+		BindingId:           101,
+		Consumer:            "paimon-bot",
+		MinimumGrantVersion: 2,
+	})
+
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+	require.Empty(t, store.minimums)
+}
+
+func TestGenericPlatformServiceInvalidateConsumerGrantStoresMinimumVersion(t *testing.T) {
+	store := newMemoryGrantInvalidationStore()
+	adapter := newGenericPlatformServiceForAdapterTest(store)
+
+	resp, err := adapter.InvalidateConsumerGrant(context.Background(), &platformv1.InvalidateConsumerGrantRequest{
+		ServiceTicket:       signedAdapterServiceTicket(t, adapterTicketOptions{ActorType: "admin", Scopes: []string{"mihomo.consumer_grant.invalidate"}}),
+		BindingId:           101,
+		Consumer:            "paimon-bot",
+		MinimumGrantVersion: 3,
+	})
+
+	require.NoError(t, err)
+	require.True(t, resp.GetSuccess())
+	require.Equal(t, uint64(3), store.minimums[grantInvalidationKey{bindingID: 101, consumer: "paimon-bot"}])
+}
+
+func TestGenericPlatformServiceInvalidateConsumerGrantRejectsMissingScope(t *testing.T) {
+	adapter := newGenericPlatformServiceForAdapterTest(newMemoryGrantInvalidationStore())
+
+	_, err := adapter.InvalidateConsumerGrant(context.Background(), &platformv1.InvalidateConsumerGrantRequest{
+		ServiceTicket:       signedAdapterServiceTicket(t, adapterTicketOptions{ActorType: "user", Scopes: []string{"mihomo.credential.read_meta"}}),
+		BindingId:           101,
+		Consumer:            "paimon-bot",
+		MinimumGrantVersion: 2,
+	})
+
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
+func TestGenericPlatformServiceRejectsStaleConsumerTicketAfterGrantInvalidation(t *testing.T) {
+	store := newMemoryGrantInvalidationStore()
+	adapter := newGenericPlatformServiceForAdapterTest(store)
+
+	_, err := adapter.InvalidateConsumerGrant(context.Background(), &platformv1.InvalidateConsumerGrantRequest{
+		ServiceTicket:       signedAdapterServiceTicket(t, adapterTicketOptions{ActorType: "admin", Scopes: []string{"mihomo.consumer_grant.invalidate"}}),
+		BindingId:           101,
+		Consumer:            "paimon-bot",
+		MinimumGrantVersion: 5,
+	})
+	require.NoError(t, err)
+
+	_, err = adapter.GetCredentialSummary(context.Background(), &platformv1.GetCredentialSummaryRequest{
+		ServiceTicket:     signedAdapterServiceTicket(t, adapterTicketOptions{ActorType: "consumer", Consumer: "paimon-bot", GrantVersion: 4, PlatformAccountID: "binding_101_10001", Scopes: []string{"mihomo.credential.read_meta"}}),
+		PlatformAccountId: "binding_101_10001",
+	})
+
+	require.Equal(t, codes.Unauthenticated, status.Code(err))
+}
+
+type grantInvalidationKey struct {
+	bindingID uint64
+	consumer  string
+}
+
+type memoryGrantInvalidationStore struct {
+	minimums map[grantInvalidationKey]uint64
+}
+
+func newMemoryGrantInvalidationStore() *memoryGrantInvalidationStore {
+	return &memoryGrantInvalidationStore{minimums: map[grantInvalidationKey]uint64{}}
+}
+
+func (m *memoryGrantInvalidationStore) Upsert(_ context.Context, bindingID uint64, consumer string, minimumVersion uint64) error {
+	m.minimums[grantInvalidationKey{bindingID: bindingID, consumer: consumer}] = minimumVersion
+	return nil
+}
+
+func (m *memoryGrantInvalidationStore) MinimumVersion(_ context.Context, bindingID uint64, consumer string) (uint64, error) {
+	return m.minimums[grantInvalidationKey{bindingID: bindingID, consumer: consumer}], nil
+}
+
+func newGenericPlatformServiceForAdapterTest(store *memoryGrantInvalidationStore) *GenericPlatformService {
+	credentialRepo := newMemoryCredentialRepo()
+	deviceRepo := newMemoryDeviceRepo()
+	profileRepo := newMemoryProfileRepo()
+	artifactRepo := newMemoryArtifactRepo()
+	client := platformmihomo.StubClient{}
+
+	bindUC := usecase.NewBindUsecase(credentialRepo, deviceRepo, profileRepo, client, serviceTestSigningKey)
+	profileUC := usecase.NewProfileUsecase(profileRepo)
+	managementUC := usecase.NewManagementUsecase(
+		credentialRepo,
+		deviceRepo,
+		profileRepo,
+		artifactRepo,
+		newMemoryManagementRepo(credentialRepo, deviceRepo, profileRepo, artifactRepo),
+		bindUC,
+		profileUC,
+	)
+	ticketVerifier := data.NewTicketVerifier(serviceTestIssuer, serviceTestSigningKey).WithGrantVersionLookup(store)
+	return NewGenericPlatformService(ticketVerifier, bindUC, usecase.NewStatusUsecase(credentialRepo, client, serviceTestSigningKey), managementUC, store)
+}
+
+type adapterTicketOptions struct {
+	ActorType         string
+	Consumer          string
+	GrantVersion      uint64
+	PlatformAccountID string
+	Scopes            []string
+}
+
+func signedAdapterServiceTicket(t *testing.T, opts adapterTicketOptions) string {
+	t.Helper()
+
+	actorType := opts.ActorType
+	if actorType == "" {
+		actorType = "bot"
+	}
+	claims := jwt.MapClaims{
+		"iss":                  serviceTestIssuer,
+		"aud":                  []string{serviceTestAudience},
+		"actor_type":           actorType,
+		"actor_id":             actorType + "-paigram",
+		"owner_user_id":        float64(1),
+		"binding_id":           float64(101),
+		"platform":             "mihomo",
+		"platform_service_key": serviceTestAudience,
+		"exp":                  time.Now().Add(time.Minute).Unix(),
+	}
+	if opts.Consumer != "" {
+		claims["consumer"] = opts.Consumer
+	}
+	if opts.GrantVersion != 0 {
+		claims["grant_version"] = float64(opts.GrantVersion)
+	}
+	if opts.PlatformAccountID != "" {
+		claims["platform_account_id"] = opts.PlatformAccountID
+	}
+	if len(opts.Scopes) > 0 {
+		claims["scopes"] = opts.Scopes
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	signed, err := token.SignedString(serviceTestSigningKey)
+	require.NoError(t, err)
+	return signed
+}
 
 func TestGenericPlatformServiceGetCredentialSummary(t *testing.T) {
 	credentialRepo := newMemoryCredentialRepo()
@@ -39,6 +196,7 @@ func TestGenericPlatformServiceGetCredentialSummary(t *testing.T) {
 		bindUC,
 		usecase.NewStatusUsecase(credentialRepo, client, serviceTestSigningKey),
 		managementUC,
+		nil,
 	)
 
 	bindResp, err := bindUC.BindCredential(context.Background(), usecase.BindCredentialInput{
@@ -83,6 +241,7 @@ func TestGenericPlatformServiceRejectsMissingSummaryScope(t *testing.T) {
 		bindUC,
 		usecase.NewStatusUsecase(credentialRepo, client, serviceTestSigningKey),
 		managementUC,
+		nil,
 	)
 
 	bindResp, err := bindUC.BindCredential(context.Background(), usecase.BindCredentialInput{
@@ -124,6 +283,7 @@ func TestGenericPlatformServiceRejectsProfileScopedSummaryTicket(t *testing.T) {
 		bindUC,
 		usecase.NewStatusUsecase(credentialRepo, client, serviceTestSigningKey),
 		managementUC,
+		nil,
 	)
 
 	bindResp, err := bindUC.BindCredential(context.Background(), usecase.BindCredentialInput{
@@ -150,6 +310,7 @@ func TestGenericPlatformServiceDescribePlatform(t *testing.T) {
 		bindUC,
 		statusUC,
 		usecase.NewManagementUsecase(newMemoryCredentialRepo(), newMemoryDeviceRepo(), newMemoryProfileRepo(), newMemoryArtifactRepo(), newMemoryManagementRepo(newMemoryCredentialRepo(), newMemoryDeviceRepo(), newMemoryProfileRepo(), newMemoryArtifactRepo()), bindUC, usecase.NewProfileUsecase(newMemoryProfileRepo())),
+		nil,
 	)
 
 	resp, err := adapter.DescribePlatform(context.Background(), &platformv1.DescribePlatformRequest{})
@@ -157,7 +318,7 @@ func TestGenericPlatformServiceDescribePlatform(t *testing.T) {
 	require.Equal(t, "mihomo", resp.PlatformKey)
 	require.Equal(t, "Mihomo", resp.DisplayName)
 	require.Equal(t, serviceTicketAudience, resp.ServiceAudience)
-	require.Equal(t, []string{"summary", "put_credential", "refresh_credential", "delete_credential", "confirm_primary_profile"}, resp.SupportedActions)
+	require.Equal(t, []string{"summary", "put_credential", "refresh_credential", "delete_credential", "confirm_primary_profile", "consumer_grant.invalidate"}, resp.SupportedActions)
 	require.NotNil(t, resp.CredentialSchema)
 	require.NotEmpty(t, resp.CredentialSchema.Fields)
 }
@@ -170,6 +331,7 @@ func TestGenericPlatformServiceRegisteredOnGRPCServer(t *testing.T) {
 		bindUC,
 		statusUC,
 		usecase.NewManagementUsecase(newMemoryCredentialRepo(), newMemoryDeviceRepo(), newMemoryProfileRepo(), newMemoryArtifactRepo(), newMemoryManagementRepo(newMemoryCredentialRepo(), newMemoryDeviceRepo(), newMemoryProfileRepo(), newMemoryArtifactRepo()), bindUC, usecase.NewProfileUsecase(newMemoryProfileRepo())),
+		nil,
 	)
 
 	listener := bufconn.Listen(1024 * 1024)
@@ -212,6 +374,7 @@ func TestGenericPlatformServicePutCredentialBindsWhenPlatformAccountIDUnknown(t 
 		bindUC,
 		usecase.NewStatusUsecase(credentialRepo, client, serviceTestSigningKey),
 		managementUC,
+		nil,
 	)
 
 	resp, err := adapter.PutCredential(context.Background(), &platformv1.PutCredentialRequest{
@@ -246,6 +409,7 @@ func TestGenericPlatformServicePutCredentialRejectsCreateWithUpdateOnlyScope(t *
 		bindUC,
 		usecase.NewStatusUsecase(credentialRepo, client, serviceTestSigningKey),
 		managementUC,
+		nil,
 	)
 
 	_, err := adapter.PutCredential(context.Background(), &platformv1.PutCredentialRequest{
@@ -278,6 +442,7 @@ func TestGenericPlatformServicePutCredentialRejectsUpdateWithBindOnlyScope(t *te
 		bindUC,
 		usecase.NewStatusUsecase(credentialRepo, client, serviceTestSigningKey),
 		managementUC,
+		nil,
 	)
 
 	bindResp, err := bindUC.BindCredential(context.Background(), usecase.BindCredentialInput{
@@ -320,6 +485,7 @@ func TestGenericPlatformServiceDeleteCredentialUsesDeleteScope(t *testing.T) {
 		bindUC,
 		usecase.NewStatusUsecase(credentialRepo, client, serviceTestSigningKey),
 		managementUC,
+		nil,
 	)
 
 	bindResp, err := bindUC.BindCredential(context.Background(), usecase.BindCredentialInput{

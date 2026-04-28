@@ -10,21 +10,29 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	mihomoapiv1 "platform-mihomo-service/api/mihomo/v1"
+	"platform-mihomo-service/internal/biz"
 	"platform-mihomo-service/internal/data"
 	"platform-mihomo-service/internal/usecase"
 )
 
+const consumerGrantInvalidateScope = "mihomo.consumer_grant.invalidate"
+
+type grantInvalidationStore interface {
+	Upsert(ctx context.Context, bindingID uint64, consumer string, minimumVersion uint64) error
+}
+
 type GenericPlatformService struct {
 	platformv1.UnimplementedPlatformServiceServer
 
-	ticketVerifier *data.TicketVerifier
-	bindUC         *usecase.BindUsecase
-	statusUC       *usecase.StatusUsecase
-	managementUC   *usecase.ManagementUsecase
+	ticketVerifier   *data.TicketVerifier
+	bindUC           *usecase.BindUsecase
+	statusUC         *usecase.StatusUsecase
+	managementUC     *usecase.ManagementUsecase
+	invalidationRepo grantInvalidationStore
 }
 
-func NewGenericPlatformService(ticketVerifier *data.TicketVerifier, bindUC *usecase.BindUsecase, statusUC *usecase.StatusUsecase, managementUC *usecase.ManagementUsecase) *GenericPlatformService {
-	return &GenericPlatformService{ticketVerifier: ticketVerifier, bindUC: bindUC, statusUC: statusUC, managementUC: managementUC}
+func NewGenericPlatformService(ticketVerifier *data.TicketVerifier, bindUC *usecase.BindUsecase, statusUC *usecase.StatusUsecase, managementUC *usecase.ManagementUsecase, invalidationRepo grantInvalidationStore) *GenericPlatformService {
+	return &GenericPlatformService{ticketVerifier: ticketVerifier, bindUC: bindUC, statusUC: statusUC, managementUC: managementUC, invalidationRepo: invalidationRepo}
 }
 
 func (s *GenericPlatformService) DescribePlatform(context.Context, *platformv1.DescribePlatformRequest) (*platformv1.DescribePlatformResponse, error) {
@@ -46,7 +54,7 @@ func (s *GenericPlatformService) DescribePlatform(context.Context, *platformv1.D
 		PlatformKey:      "mihomo",
 		DisplayName:      "Mihomo",
 		ServiceAudience:  serviceTicketAudience,
-		SupportedActions: []string{"summary", "put_credential", "refresh_credential", "delete_credential", "confirm_primary_profile"},
+		SupportedActions: []string{"summary", "put_credential", "refresh_credential", "delete_credential", "confirm_primary_profile", "consumer_grant.invalidate"},
 		CredentialSchema: credentialSchema,
 		Version:          "v1",
 	}, nil
@@ -57,7 +65,7 @@ func (s *GenericPlatformService) GetCredentialSummary(ctx context.Context, req *
 		return nil, status.Error(codes.InvalidArgument, "request is required")
 	}
 
-	claims, err := s.ticketVerifier.Verify(req.GetServiceTicket(), serviceTicketAudience)
+	claims, err := s.ticketVerifier.VerifyContext(ctx, req.GetServiceTicket(), serviceTicketAudience)
 	if err != nil {
 		return nil, status.Error(codes.Unauthenticated, "invalid service ticket")
 	}
@@ -79,7 +87,7 @@ func (s *GenericPlatformService) PutCredential(ctx context.Context, req *platfor
 		return nil, status.Error(codes.InvalidArgument, "request is required")
 	}
 
-	claims, err := s.ticketVerifier.Verify(req.GetServiceTicket(), serviceTicketAudience)
+	claims, err := s.ticketVerifier.VerifyContext(ctx, req.GetServiceTicket(), serviceTicketAudience)
 	if err != nil {
 		return nil, status.Error(codes.Unauthenticated, "invalid service ticket")
 	}
@@ -141,7 +149,7 @@ func (s *GenericPlatformService) RefreshCredential(ctx context.Context, req *pla
 		return nil, status.Error(codes.InvalidArgument, "request is required")
 	}
 
-	claims, err := s.ticketVerifier.Verify(req.GetServiceTicket(), serviceTicketAudience)
+	claims, err := s.ticketVerifier.VerifyContext(ctx, req.GetServiceTicket(), serviceTicketAudience)
 	if err != nil {
 		return nil, status.Error(codes.Unauthenticated, "invalid service ticket")
 	}
@@ -175,7 +183,7 @@ func (s *GenericPlatformService) DeleteCredential(ctx context.Context, req *plat
 		return nil, status.Error(codes.InvalidArgument, "request is required")
 	}
 
-	claims, err := s.ticketVerifier.Verify(req.GetServiceTicket(), serviceTicketAudience)
+	claims, err := s.ticketVerifier.VerifyContext(ctx, req.GetServiceTicket(), serviceTicketAudience)
 	if err != nil {
 		return nil, status.Error(codes.Unauthenticated, "invalid service ticket")
 	}
@@ -200,6 +208,55 @@ func (s *GenericPlatformService) DeleteCredential(ctx context.Context, req *plat
 		return nil, mapUsecaseError(err)
 	}
 	return &platformv1.DeleteCredentialResponse{Success: true}, nil
+}
+
+func (s *GenericPlatformService) InvalidateConsumerGrant(ctx context.Context, req *platformv1.InvalidateConsumerGrantRequest) (*platformv1.InvalidateConsumerGrantResponse, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "request is required")
+	}
+	if req.GetBindingId() == 0 {
+		return nil, status.Error(codes.InvalidArgument, "binding_id is required")
+	}
+	if req.GetConsumer() == "" {
+		return nil, status.Error(codes.InvalidArgument, "consumer is required")
+	}
+	if req.GetMinimumGrantVersion() == 0 {
+		return nil, status.Error(codes.InvalidArgument, "minimum_grant_version is required")
+	}
+
+	claims, err := s.ticketVerifier.VerifyContext(ctx, req.GetServiceTicket(), serviceTicketAudience)
+	if err != nil {
+		return nil, status.Error(codes.Unauthenticated, "invalid service ticket")
+	}
+	if claims.ActorType == "consumer" {
+		return nil, status.Error(codes.PermissionDenied, "consumer tickets cannot invalidate grants")
+	}
+	if claims.BindingID != req.GetBindingId() {
+		return nil, status.Error(codes.PermissionDenied, "ticket binding_id does not match request")
+	}
+	if !claimHasScope(claims, consumerGrantInvalidateScope) {
+		return nil, status.Error(codes.PermissionDenied, "missing consumer grant invalidation scope")
+	}
+	if s.invalidationRepo == nil {
+		return nil, status.Error(codes.Internal, "grant invalidation repo is not configured")
+	}
+	if err := s.invalidationRepo.Upsert(ctx, req.GetBindingId(), req.GetConsumer(), req.GetMinimumGrantVersion()); err != nil {
+		return nil, status.Error(codes.Internal, "failed to invalidate consumer grant")
+	}
+
+	return &platformv1.InvalidateConsumerGrantResponse{Success: true}, nil
+}
+
+func claimHasScope(claims *biz.ServiceTicketClaims, scope string) bool {
+	if claims == nil {
+		return false
+	}
+	for _, candidate := range claims.Scopes {
+		if candidate == scope {
+			return true
+		}
+	}
+	return false
 }
 
 type genericCredentialPayload struct {

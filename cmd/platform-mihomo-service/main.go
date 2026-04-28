@@ -57,8 +57,9 @@ func main() {
 	profileRepo := data.NewProfileRepo(database)
 	artifactRepo := data.NewArtifactRepo(database, redisClient, bc.GetData().GetRedis().GetPrefix())
 	managementRepo := data.NewManagementRepo(database, redisClient, bc.GetData().GetRedis().GetPrefix())
+	grantInvalidationRepo := data.NewGrantInvalidationRepo(database)
 	client := platformmihomo.UnconfiguredClient{}
-	ticketVerifier := data.NewTicketVerifier(bc.GetSecurity().GetServiceTicketIssuer(), []byte(bc.GetSecurity().GetServiceTicketSigningKey()))
+	ticketVerifier := data.NewTicketVerifier(bc.GetSecurity().GetServiceTicketIssuer(), []byte(bc.GetSecurity().GetServiceTicketSigningKey())).WithGrantVersionLookup(grantInvalidationRepo)
 
 	bindUC := usecase.NewBindUsecase(credentialRepo, deviceRepo, profileRepo, client, []byte(bc.GetSecurity().GetCredentialEncryptionKey()))
 	statusUC := usecase.NewStatusUsecase(credentialRepo, client, []byte(bc.GetSecurity().GetCredentialEncryptionKey()))
@@ -74,7 +75,7 @@ func main() {
 		managementUC,
 	)
 	sharedSvc := service.NewMihomoCredentialService(ticketVerifier, managementUC)
-	genericSvc := service.NewGenericPlatformService(ticketVerifier, bindUC, statusUC, managementUC)
+	genericSvc := service.NewGenericPlatformService(ticketVerifier, bindUC, statusUC, managementUC, grantInvalidationRepo)
 
 	grpcSrv := server.NewGRPCServer(&bc, mihomoSvc, sharedSvc, genericSvc)
 	app := kratos.New(
