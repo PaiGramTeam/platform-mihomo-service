@@ -611,20 +611,33 @@ func newMemoryManagementRepo(
 }
 
 func (r *memoryManagementRepo) DeleteCredentialGraph(_ context.Context, platformAccountID string) error {
-	if credential := r.credentialRepo.byPlatformAccountID[platformAccountID]; credential != nil {
-		delete(r.credentialRepo.byBindingID, credential.BindingID)
-	}
-	delete(r.credentialRepo.byPlatformAccountID, platformAccountID)
-	delete(r.deviceRepo.byPlatformAccountID, platformAccountID)
-	if profiles := r.profileRepo.byPlatformAccountID[platformAccountID]; len(profiles) > 0 {
-		delete(r.profileRepo.byBindingID, profiles[0].BindingID)
-	}
-	delete(r.profileRepo.byPlatformAccountID, platformAccountID)
+	_ = r.credentialRepo.DeleteByPlatformAccountID(context.Background(), platformAccountID)
+	_ = r.deviceRepo.DeleteByPlatformAccountID(context.Background(), platformAccountID)
+	_ = r.profileRepo.DeleteByPlatformAccountID(context.Background(), platformAccountID)
 	for key, artifact := range r.artifactRepo.artifacts {
 		if artifact.PlatformAccountID == platformAccountID {
 			delete(r.artifactRepo.artifacts, key)
 		}
 	}
+	return nil
+}
+
+func (r *memoryManagementRepo) DeleteCredentialGraphByBindingID(_ context.Context, bindingID uint64) error {
+	credential := r.credentialRepo.byBindingID[bindingID]
+	if credential != nil {
+		delete(r.credentialRepo.byPlatformAccountID, credential.PlatformAccountID)
+		for key, artifact := range r.artifactRepo.artifacts {
+			if artifact.PlatformAccountID == credential.PlatformAccountID {
+				delete(r.artifactRepo.artifacts, key)
+			}
+		}
+	}
+	delete(r.credentialRepo.byBindingID, bindingID)
+	_ = r.deviceRepo.DeleteByBindingID(context.Background(), bindingID)
+	for _, profile := range r.profileRepo.byBindingID[bindingID] {
+		delete(r.profileRepo.byPlatformAccountID, profile.PlatformAccountID)
+	}
+	delete(r.profileRepo.byBindingID, bindingID)
 	return nil
 }
 
@@ -821,7 +834,19 @@ func (r *memoryProfileRepo) ListByPlatformAccountID(_ context.Context, platformA
 
 func (r *memoryProfileRepo) DeleteByPlatformAccountID(_ context.Context, platformAccountID string) error {
 	if profiles := r.byPlatformAccountID[platformAccountID]; len(profiles) > 0 {
-		delete(r.byBindingID, profiles[0].BindingID)
+		bindingID := profiles[0].BindingID
+		current := r.byBindingID[bindingID]
+		filtered := make([]*biz.Profile, 0, len(current))
+		for _, profile := range current {
+			if profile.PlatformAccountID != platformAccountID {
+				filtered = append(filtered, profile)
+			}
+		}
+		if len(filtered) == 0 {
+			delete(r.byBindingID, bindingID)
+		} else {
+			r.byBindingID[bindingID] = filtered
+		}
 	}
 	delete(r.byPlatformAccountID, platformAccountID)
 	return nil
@@ -829,6 +854,10 @@ func (r *memoryProfileRepo) DeleteByPlatformAccountID(_ context.Context, platfor
 
 func (r *memoryProfileRepo) DeleteMissingByPlatformAccountID(_ context.Context, platformAccountID string, keep []biz.ProfileIdentity) error {
 	profiles := r.byPlatformAccountID[platformAccountID]
+	if len(profiles) == 0 {
+		return nil
+	}
+	bindingID := profiles[0].BindingID
 	keepSet := make(map[string]struct{}, len(keep))
 	for _, identity := range keep {
 		keepSet[identity.PlayerID+":"+identity.Region] = struct{}{}
@@ -840,13 +869,25 @@ func (r *memoryProfileRepo) DeleteMissingByPlatformAccountID(_ context.Context, 
 		}
 	}
 	r.byPlatformAccountID[platformAccountID] = filtered
-	if len(filtered) == 0 {
-		if len(profiles) > 0 {
-			delete(r.byBindingID, profiles[0].BindingID)
+	current := r.byBindingID[bindingID]
+	filteredByBinding := make([]*biz.Profile, 0, len(current))
+	for _, profile := range current {
+		if profile.PlatformAccountID != platformAccountID {
+			filteredByBinding = append(filteredByBinding, profile)
+			continue
 		}
-		return nil
+		if _, ok := keepSet[profile.PlayerID+":"+profile.Region]; ok {
+			filteredByBinding = append(filteredByBinding, profile)
+		}
 	}
-	r.byBindingID[filtered[0].BindingID] = filtered
+	if len(filteredByBinding) == 0 {
+		delete(r.byBindingID, bindingID)
+	} else {
+		r.byBindingID[bindingID] = filteredByBinding
+	}
+	if len(filtered) == 0 {
+		delete(r.byPlatformAccountID, platformAccountID)
+	}
 	return nil
 }
 

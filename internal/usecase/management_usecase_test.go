@@ -146,6 +146,27 @@ func TestDeleteCredentialWithScopeRejectsForeignBinding(t *testing.T) {
 	require.ErrorIs(t, err, ErrBindingScopeDenied)
 }
 
+func TestDeleteCredentialWithScopeDeletesCredentialGraphByBinding(t *testing.T) {
+	uc := newManagementUsecaseForTest(t)
+	platformAccountID := bindCredentialForManagementTest(t, uc)
+	require.NoError(t, uc.artifactRepo.Put(context.Background(), &biz.Artifact{
+		PlatformAccountID: platformAccountID,
+		ArtifactType:      authKeyArtifactType,
+		ArtifactValue:     "authkey-1",
+		ScopeKey:          "1008611",
+		ExpiresAt:         time.Now().UTC().Add(5 * time.Minute),
+	}))
+
+	err := uc.DeleteCredentialWithScope(context.Background(), ScopeGuard{BindingID: 101}, platformAccountID)
+	require.NoError(t, err)
+	require.Equal(t, 1, uc.managementRepo.deleteByBindingCalls)
+	require.Zero(t, uc.managementRepo.deleteCalls)
+	require.Nil(t, uc.credentialRepo.byBindingID[uint64(101)])
+	require.NotContains(t, uc.deviceRepo.byBindingID, uint64(101))
+	require.NotContains(t, uc.profileRepo.byBindingID, uint64(101))
+	require.Empty(t, uc.artifactRepo.artifacts)
+}
+
 func TestGetCredentialSummaryWithScopeRejectsProfileScopedTicket(t *testing.T) {
 	uc := newManagementUsecaseForTest(t)
 	platformAccountID := bindCredentialForManagementTest(t, uc)
@@ -243,19 +264,37 @@ func bindCredentialForManagementTest(t *testing.T, uc *managementUsecaseTestHarn
 }
 
 type memoryManagementRepo struct {
-	credentialRepo *memoryCredentialRepo
-	deviceRepo     *memoryDeviceRepo
-	profileRepo    *memoryProfileRepo
-	artifactRepo   *memoryArtifactRepo
-	deleteCalls    int
+	credentialRepo       *memoryCredentialRepo
+	deviceRepo           *memoryDeviceRepo
+	profileRepo          *memoryProfileRepo
+	artifactRepo         *memoryArtifactRepo
+	deleteCalls          int
+	deleteByBindingCalls int
 }
 
 func (r *memoryManagementRepo) DeleteCredentialGraph(_ context.Context, platformAccountID string) error {
 	r.deleteCalls++
 	requireDeleteArtifacts(r.artifactRepo, platformAccountID)
-	delete(r.credentialRepo.byPlatformAccountID, platformAccountID)
-	delete(r.deviceRepo.byPlatformAccountID, platformAccountID)
-	delete(r.profileRepo.byPlatformAccountID, platformAccountID)
+	_ = r.credentialRepo.DeleteByPlatformAccountID(context.Background(), platformAccountID)
+	_ = r.deviceRepo.DeleteByPlatformAccountID(context.Background(), platformAccountID)
+	_ = r.profileRepo.DeleteByPlatformAccountID(context.Background(), platformAccountID)
+	return nil
+}
+
+func (r *memoryManagementRepo) DeleteCredentialGraphByBindingID(_ context.Context, bindingID uint64) error {
+	r.deleteByBindingCalls++
+	credential := r.credentialRepo.byBindingID[bindingID]
+	if credential != nil {
+		requireDeleteArtifacts(r.artifactRepo, credential.PlatformAccountID)
+		delete(r.credentialRepo.byPlatformAccountID, credential.PlatformAccountID)
+	}
+	delete(r.credentialRepo.byBindingID, bindingID)
+	_ = r.deviceRepo.DeleteByBindingID(context.Background(), bindingID)
+	profiles := r.profileRepo.byBindingID[bindingID]
+	for _, profile := range profiles {
+		delete(r.profileRepo.byPlatformAccountID, profile.PlatformAccountID)
+	}
+	delete(r.profileRepo.byBindingID, bindingID)
 	return nil
 }
 

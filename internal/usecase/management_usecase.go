@@ -188,7 +188,7 @@ func (uc *ManagementUsecase) DeleteCredentialWithScope(ctx context.Context, guar
 	if credential.PlatformAccountID != platformAccountID {
 		return ErrPlatformAccountMismatch
 	}
-	return uc.DeleteCredential(ctx, credential.PlatformAccountID)
+	return uc.management.DeleteCredentialGraphByBindingID(ctx, guard.BindingID)
 }
 
 func (uc *ManagementUsecase) pruneStaleProfiles(ctx context.Context, platformAccountID string, profiles []v1.ProfileSummary) error {
