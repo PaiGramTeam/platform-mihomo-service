@@ -724,6 +724,20 @@ func (r *memoryProfileRepo) ListByPlatformAccountID(_ context.Context, platformA
 	return result, nil
 }
 
+func (r *memoryProfileRepo) SetDefaultByBindingAndPlayerID(_ context.Context, bindingID uint64, platformAccountID string, playerID string) error {
+	for _, profile := range r.byPlatformAccountID[platformAccountID] {
+		if profile.BindingID == bindingID {
+			profile.IsDefault = profile.PlayerID == playerID
+		}
+	}
+	for _, profile := range r.byBindingID[bindingID] {
+		if profile.PlatformAccountID == platformAccountID {
+			profile.IsDefault = profile.PlayerID == playerID
+		}
+	}
+	return nil
+}
+
 func (r *memoryProfileRepo) ListByBindingID(_ context.Context, bindingID uint64) ([]*biz.Profile, error) {
 	profiles := r.byBindingID[bindingID]
 	result := make([]*biz.Profile, 0, len(profiles))

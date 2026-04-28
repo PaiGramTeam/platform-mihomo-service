@@ -38,6 +38,12 @@ func (r *ProfileRepo) Save(ctx context.Context, profile *biz.Profile) error {
 	}).Create(&record).Error
 }
 
+func (r *ProfileRepo) SetDefaultByBindingAndPlayerID(ctx context.Context, bindingID uint64, platformAccountID string, playerID string) error {
+	return dbFromContext(ctx, r.db).Model(&model.AccountProfile{}).
+		Where("binding_id = ? AND platform_account_id = ?", bindingID, platformAccountID).
+		Update("is_default", gorm.Expr("player_id = ?", playerID)).Error
+}
+
 func (r *ProfileRepo) ListByBindingID(ctx context.Context, bindingID uint64) ([]*biz.Profile, error) {
 	var records []model.AccountProfile
 	if err := dbFromContext(ctx, r.db).Where("binding_id = ?", bindingID).Order("id asc").Find(&records).Error; err != nil {

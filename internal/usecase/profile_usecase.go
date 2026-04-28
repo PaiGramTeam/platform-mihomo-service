@@ -98,12 +98,10 @@ func (uc *ProfileUsecase) ConfirmPrimaryProfile(ctx context.Context, platformAcc
 		return nil, ErrProfileNotFound
 	}
 
-	for _, profile := range profiles {
-		profile.IsDefault = profile.PlayerID == playerID
-		if err := uc.profileRepo.Save(ctx, profile); err != nil {
-			return nil, err
-		}
+	if err := uc.profileRepo.SetDefaultByBindingAndPlayerID(ctx, selected.BindingID, platformAccountID, playerID); err != nil {
+		return nil, err
 	}
+	selected.IsDefault = true
 	return toProfileSummary(selected), nil
 }
 
@@ -111,19 +109,20 @@ func (uc *ProfileUsecase) ConfirmPrimaryProfileWithScope(ctx context.Context, gu
 	if err := guard.RequirePlatformAccountID(platformAccountID); err != nil {
 		return nil, err
 	}
-	profiles, selected, err := uc.findProfileByBindingAndPlayerID(ctx, guard.BindingID, platformAccountID, playerID)
+	if err := guard.RequireBindingWide(); err != nil {
+		return nil, err
+	}
+	_, selected, err := uc.findProfileByBindingAndPlayerID(ctx, guard.BindingID, platformAccountID, playerID)
 	if err != nil {
 		return nil, err
 	}
 	if err := guard.RequireProfile(selected.BindingID, selected.ID); err != nil {
 		return nil, err
 	}
-	for _, profile := range profiles {
-		profile.IsDefault = profile.PlayerID == playerID
-		if err := uc.profileRepo.Save(ctx, profile); err != nil {
-			return nil, err
-		}
+	if err := uc.profileRepo.SetDefaultByBindingAndPlayerID(ctx, selected.BindingID, platformAccountID, playerID); err != nil {
+		return nil, err
 	}
+	selected.IsDefault = true
 	return toProfileSummary(selected), nil
 }
 

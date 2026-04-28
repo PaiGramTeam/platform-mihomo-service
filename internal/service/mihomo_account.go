@@ -339,6 +339,9 @@ func (s *MihomoAccountService) ConfirmPrimaryProfile(ctx context.Context, req *v
 	if err != nil {
 		return nil, mapUsecaseError(err)
 	}
+	if err := guard.RequireBindingWide(); err != nil {
+		return nil, mapUsecaseError(err)
+	}
 	profile, err := s.profileUC.ConfirmPrimaryProfileWithScope(ctx, guard, req.GetPlatformAccountId(), req.GetPlayerId())
 	if err != nil {
 		return nil, mapUsecaseError(err)

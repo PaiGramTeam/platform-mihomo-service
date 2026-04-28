@@ -53,7 +53,7 @@ func (s *GenericPlatformService) DescribePlatform(context.Context, *platformv1.D
 		PlatformKey:      "mihomo",
 		DisplayName:      "Mihomo",
 		ServiceAudience:  serviceTicketAudience,
-		SupportedActions: []string{"summary", "put_credential", "refresh_credential", "delete_credential", "confirm_primary_profile", "consumer_grant.invalidate"},
+		SupportedActions: []string{usecase.ActionStatusRead, usecase.ActionProfileRead, usecase.ActionProfileWrite, usecase.ActionAuthKeyIssue, usecase.ActionCredentialRead, usecase.ActionCredentialBind, usecase.ActionCredentialUpdate, usecase.ActionCredentialRefresh, usecase.ActionCredentialDelete, usecase.ActionDeviceUpdate, consumerGrantInvalidateScope},
 		CredentialSchema: credentialSchema,
 		Version:          "v1",
 	}, nil

@@ -449,6 +449,19 @@ func TestConfirmPrimaryProfileRejectsReadOnlyScope(t *testing.T) {
 	require.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
+func TestConfirmPrimaryProfileRejectsProfileScopedTicket(t *testing.T) {
+	svc := newMihomoAccountServiceForTest(t)
+	bindResp := bindCredentialForServiceTest(t, svc)
+
+	_, err := svc.ConfirmPrimaryProfile(context.Background(), &v1.ConfirmPrimaryProfileRequest{
+		ServiceTicket:     signedServiceTicketForProfile(t, bindResp.PlatformAccountId, 1001, "mihomo.profile.write"),
+		PlatformAccountId: bindResp.PlatformAccountId,
+		PlayerId:          bindResp.Profiles[0].PlayerId,
+	})
+	require.Error(t, err)
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
 func TestConfirmPrimaryProfileRejectsExpiredTicket(t *testing.T) {
 	svc := newMihomoAccountServiceForTest(t)
 	bindResp := bindCredentialForServiceTest(t, svc)
@@ -879,6 +892,20 @@ func (r *memoryProfileRepo) ListByPlatformAccountID(_ context.Context, platformA
 	}
 
 	return result, nil
+}
+
+func (r *memoryProfileRepo) SetDefaultByBindingAndPlayerID(_ context.Context, bindingID uint64, platformAccountID string, playerID string) error {
+	for _, profile := range r.byPlatformAccountID[platformAccountID] {
+		if profile.BindingID == bindingID {
+			profile.IsDefault = profile.PlayerID == playerID
+		}
+	}
+	for _, profile := range r.byBindingID[bindingID] {
+		if profile.PlatformAccountID == platformAccountID {
+			profile.IsDefault = profile.PlayerID == playerID
+		}
+	}
+	return nil
 }
 
 func (r *memoryProfileRepo) DeleteByPlatformAccountID(_ context.Context, platformAccountID string) error {

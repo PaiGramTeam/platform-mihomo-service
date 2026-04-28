@@ -372,7 +372,7 @@ func TestGenericPlatformServiceDescribePlatform(t *testing.T) {
 	require.Equal(t, "mihomo", resp.PlatformKey)
 	require.Equal(t, "Mihomo", resp.DisplayName)
 	require.Equal(t, serviceTicketAudience, resp.ServiceAudience)
-	require.Equal(t, []string{"summary", "put_credential", "refresh_credential", "delete_credential", "confirm_primary_profile", "consumer_grant.invalidate"}, resp.SupportedActions)
+	require.Equal(t, []string{"mihomo.status.read", "mihomo.profile.read", "mihomo.profile.write", "mihomo.authkey.issue", "mihomo.credential.read_meta", "mihomo.credential.bind", "mihomo.credential.update", "mihomo.credential.refresh", "mihomo.credential.delete", "mihomo.device.update", "mihomo.consumer_grant.invalidate"}, resp.SupportedActions)
 	require.NotNil(t, resp.CredentialSchema)
 	require.NotEmpty(t, resp.CredentialSchema.Fields)
 }
