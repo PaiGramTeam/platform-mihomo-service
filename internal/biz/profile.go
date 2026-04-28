@@ -27,6 +27,7 @@ type ProfileRepository interface {
 	Save(ctx context.Context, profile *Profile) error
 	ListByBindingID(ctx context.Context, bindingID uint64) ([]*Profile, error)
 	ListByPlatformAccountID(ctx context.Context, platformAccountID string) ([]*Profile, error)
+	DeleteMissingByBindingID(ctx context.Context, bindingID uint64, keep []ProfileIdentity) error
 	DeleteByPlatformAccountID(ctx context.Context, platformAccountID string) error
 	DeleteMissingByPlatformAccountID(ctx context.Context, platformAccountID string, keep []ProfileIdentity) error
 }

@@ -2,6 +2,7 @@ package data
 
 import (
 	"context"
+	"strings"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -32,8 +33,8 @@ func (r *ProfileRepo) Save(ctx context.Context, profile *biz.Profile) error {
 	}
 
 	return dbFromContext(ctx, r.db).Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "platform_account_id"}, {Name: "player_id"}, {Name: "region"}},
-		DoUpdates: clause.AssignmentColumns([]string{"game_biz", "nickname", "level", "is_default", "updated_at"}),
+		Columns:   []clause.Column{{Name: "binding_id"}, {Name: "player_id"}, {Name: "region"}},
+		DoUpdates: clause.AssignmentColumns([]string{"platform_account_id", "game_biz", "nickname", "level", "is_default", "updated_at"}),
 	}).Create(&record).Error
 }
 
@@ -57,6 +58,21 @@ func (r *ProfileRepo) ListByPlatformAccountID(ctx context.Context, platformAccou
 
 func (r *ProfileRepo) DeleteByPlatformAccountID(ctx context.Context, platformAccountID string) error {
 	return dbFromContext(ctx, r.db).Where("platform_account_id = ?", platformAccountID).Delete(&model.AccountProfile{}).Error
+}
+
+func (r *ProfileRepo) DeleteMissingByBindingID(ctx context.Context, bindingID uint64, keep []biz.ProfileIdentity) error {
+	query := dbFromContext(ctx, r.db).Where("binding_id = ?", bindingID)
+	if len(keep) == 0 {
+		return query.Delete(&model.AccountProfile{}).Error
+	}
+
+	clauses := make([]string, 0, len(keep))
+	args := make([]any, 0, len(keep)*2)
+	for _, identity := range keep {
+		clauses = append(clauses, "(player_id = ? AND region = ?)")
+		args = append(args, identity.PlayerID, identity.Region)
+	}
+	return query.Where("NOT ("+strings.Join(clauses, " OR ")+")", args...).Delete(&model.AccountProfile{}).Error
 }
 
 func (r *ProfileRepo) DeleteMissingByPlatformAccountID(ctx context.Context, platformAccountID string, keep []biz.ProfileIdentity) error {

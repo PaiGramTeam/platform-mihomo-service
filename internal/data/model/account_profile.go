@@ -4,11 +4,11 @@ import "time"
 
 type AccountProfile struct {
 	ID                uint64    `gorm:"primaryKey"`
-	BindingID         uint64    `gorm:"not null;index:idx_profile_binding_id"`
-	PlatformAccountID string    `gorm:"size:64;not null;uniqueIndex:uniq_platform_profile,priority:1;index:idx_profile_platform_account_id"`
+	BindingID         uint64    `gorm:"not null;uniqueIndex:uniq_profile_binding_player_region,priority:1;index:idx_profile_binding_id"`
+	PlatformAccountID string    `gorm:"size:64;not null;index:idx_profile_platform_account_id"`
 	GameBiz           string    `gorm:"size:64;not null"`
-	Region            string    `gorm:"size:32;not null;uniqueIndex:uniq_platform_profile,priority:3"`
-	PlayerID          string    `gorm:"size:64;not null;uniqueIndex:uniq_platform_profile,priority:2"`
+	Region            string    `gorm:"size:32;not null;uniqueIndex:uniq_profile_binding_player_region,priority:3"`
+	PlayerID          string    `gorm:"size:64;not null;uniqueIndex:uniq_profile_binding_player_region,priority:2"`
 	Nickname          string    `gorm:"size:255;not null"`
 	Level             int       `gorm:"not null;default:0"`
 	IsDefault         bool      `gorm:"not null;default:false"`

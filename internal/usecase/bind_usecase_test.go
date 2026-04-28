@@ -48,6 +48,7 @@ func TestBindCredentialPersistsCredentialDeviceAndProfiles(t *testing.T) {
 
 	devices := uc.deviceRepo.byPlatformAccountID[resp.PlatformAccountID]
 	require.Len(t, devices, 1)
+	require.Equal(t, uint64(101), devices[0].BindingID)
 	require.Equal(t, "12345678-1234-1234-1234-123456789abc", devices[0].DeviceID)
 	require.Equal(t, "abcdefghijklmn", devices[0].DeviceFP)
 	require.NotNil(t, devices[0].DeviceName)
@@ -475,7 +476,7 @@ func (c *mutatingMihomoClient) ValidateAndDiscover(_ context.Context, _ string, 
 			Status:            "active",
 		}
 		_ = c.repo.Save(context.Background(), credential)
-		_ = c.deviceRepo.Save(context.Background(), &biz.Device{PlatformAccountID: c.newAccountID, DeviceID: "device-mutated", DeviceFP: "fp-mutated", IsValid: true})
+		_ = c.deviceRepo.Save(context.Background(), &biz.Device{BindingID: c.bindingID, PlatformAccountID: c.newAccountID, DeviceID: "device-mutated", DeviceFP: "fp-mutated", IsValid: true})
 		_ = c.profileRepo.Save(context.Background(), &biz.Profile{BindingID: c.bindingID, PlatformAccountID: c.newAccountID, GameBiz: "hk4e_cn", Region: "cn_gf01", PlayerID: "3008611", Nickname: "Mutated", Level: 60, IsDefault: true})
 		c.mutated = true
 	}
@@ -567,6 +568,7 @@ func (r *memoryCredentialRepo) WithinTransaction(ctx context.Context, fn func(co
 	credentialByPlatform := cloneCredentialMapByPlatformAccountID(r.byPlatformAccountID)
 	credentialByBinding := cloneCredentialMapByBindingID(r.byBindingID)
 	deviceByPlatform := cloneDeviceMapByPlatformAccountID(r.deviceRepo.byPlatformAccountID)
+	deviceByBinding := cloneDeviceMapByBindingID(r.deviceRepo.byBindingID)
 	profileByPlatform := cloneProfileMapByPlatformAccountID(r.profileRepo.byPlatformAccountID)
 	profileByBinding := cloneProfileMapByBindingID(r.profileRepo.byBindingID)
 	r.inTransaction = true
@@ -577,6 +579,7 @@ func (r *memoryCredentialRepo) WithinTransaction(ctx context.Context, fn func(co
 		r.byPlatformAccountID = credentialByPlatform
 		r.byBindingID = credentialByBinding
 		r.deviceRepo.byPlatformAccountID = deviceByPlatform
+		r.deviceRepo.byBindingID = deviceByBinding
 		r.profileRepo.byPlatformAccountID = profileByPlatform
 		r.profileRepo.byBindingID = profileByBinding
 		return err
@@ -586,12 +589,14 @@ func (r *memoryCredentialRepo) WithinTransaction(ctx context.Context, fn func(co
 
 type memoryDeviceRepo struct {
 	byPlatformAccountID           map[string][]*biz.Device
+	byBindingID                   map[uint64][]*biz.Device
 	failDeleteByPlatformAccountID map[string]error
 }
 
 func newMemoryDeviceRepo() *memoryDeviceRepo {
 	return &memoryDeviceRepo{
 		byPlatformAccountID:           make(map[string][]*biz.Device),
+		byBindingID:                   make(map[uint64][]*biz.Device),
 		failDeleteByPlatformAccountID: make(map[string]error),
 	}
 }
@@ -599,15 +604,34 @@ func newMemoryDeviceRepo() *memoryDeviceRepo {
 func (r *memoryDeviceRepo) Save(_ context.Context, device *biz.Device) error {
 	clone := *device
 	current := r.byPlatformAccountID[device.PlatformAccountID]
+	byBinding := r.byBindingID[device.BindingID]
 	for index, existing := range current {
 		if existing.DeviceID == device.DeviceID {
 			current[index] = &clone
 			r.byPlatformAccountID[device.PlatformAccountID] = current
+			for bindingIndex, bindingDevice := range byBinding {
+				if bindingDevice.DeviceID == device.DeviceID {
+					byBinding[bindingIndex] = &clone
+					r.byBindingID[device.BindingID] = byBinding
+					return nil
+				}
+			}
 			return nil
 		}
 	}
 	r.byPlatformAccountID[device.PlatformAccountID] = append(current, &clone)
+	r.byBindingID[device.BindingID] = append(byBinding, &clone)
 	return nil
+}
+
+func (r *memoryDeviceRepo) ListByBindingID(_ context.Context, bindingID uint64) ([]*biz.Device, error) {
+	devices := r.byBindingID[bindingID]
+	result := make([]*biz.Device, 0, len(devices))
+	for _, device := range devices {
+		clone := *device
+		result = append(result, &clone)
+	}
+	return result, nil
 }
 
 func (r *memoryDeviceRepo) ListByPlatformAccountID(_ context.Context, platformAccountID string) ([]*biz.Device, error) {
@@ -624,7 +648,30 @@ func (r *memoryDeviceRepo) DeleteByPlatformAccountID(_ context.Context, platform
 	if err := r.failDeleteByPlatformAccountID[platformAccountID]; err != nil {
 		return err
 	}
+	if devices := r.byPlatformAccountID[platformAccountID]; len(devices) > 0 {
+		bindingID := devices[0].BindingID
+		current := r.byBindingID[bindingID]
+		filtered := make([]*biz.Device, 0, len(current))
+		for _, device := range current {
+			if device.PlatformAccountID != platformAccountID {
+				filtered = append(filtered, device)
+			}
+		}
+		if len(filtered) == 0 {
+			delete(r.byBindingID, bindingID)
+		} else {
+			r.byBindingID[bindingID] = filtered
+		}
+	}
 	delete(r.byPlatformAccountID, platformAccountID)
+	return nil
+}
+
+func (r *memoryDeviceRepo) DeleteByBindingID(_ context.Context, bindingID uint64) error {
+	for _, device := range r.byBindingID[bindingID] {
+		delete(r.byPlatformAccountID, device.PlatformAccountID)
+	}
+	delete(r.byBindingID, bindingID)
 	return nil
 }
 
@@ -730,6 +777,39 @@ func (r *memoryProfileRepo) DeleteMissingByPlatformAccountID(_ context.Context, 
 	return nil
 }
 
+func (r *memoryProfileRepo) DeleteMissingByBindingID(_ context.Context, bindingID uint64, keep []biz.ProfileIdentity) error {
+	profiles := r.byBindingID[bindingID]
+	keepSet := make(map[string]struct{}, len(keep))
+	for _, identity := range keep {
+		keepSet[identity.PlayerID+":"+identity.Region] = struct{}{}
+	}
+	filtered := make([]*biz.Profile, 0, len(profiles))
+	for _, profile := range profiles {
+		if _, ok := keepSet[profile.PlayerID+":"+profile.Region]; ok {
+			filtered = append(filtered, profile)
+		}
+	}
+	r.byBindingID[bindingID] = filtered
+	for platformAccountID, platformProfiles := range r.byPlatformAccountID {
+		filteredByAccount := platformProfiles[:0]
+		for _, profile := range platformProfiles {
+			if profile.BindingID != bindingID {
+				filteredByAccount = append(filteredByAccount, profile)
+				continue
+			}
+			if _, ok := keepSet[profile.PlayerID+":"+profile.Region]; ok {
+				filteredByAccount = append(filteredByAccount, profile)
+			}
+		}
+		if len(filteredByAccount) == 0 {
+			delete(r.byPlatformAccountID, platformAccountID)
+		} else {
+			r.byPlatformAccountID[platformAccountID] = filteredByAccount
+		}
+	}
+	return nil
+}
+
 var _ biz.CredentialRepository = (*memoryCredentialRepo)(nil)
 var _ biz.DeviceRepository = (*memoryDeviceRepo)(nil)
 var _ biz.ProfileRepository = (*memoryProfileRepo)(nil)
@@ -754,6 +834,19 @@ func cloneCredentialMapByBindingID(source map[uint64]*biz.Credential) map[uint64
 
 func cloneDeviceMapByPlatformAccountID(source map[string][]*biz.Device) map[string][]*biz.Device {
 	cloned := make(map[string][]*biz.Device, len(source))
+	for key, devices := range source {
+		copied := make([]*biz.Device, 0, len(devices))
+		for _, device := range devices {
+			clone := *device
+			copied = append(copied, &clone)
+		}
+		cloned[key] = copied
+	}
+	return cloned
+}
+
+func cloneDeviceMapByBindingID(source map[uint64][]*biz.Device) map[uint64][]*biz.Device {
+	cloned := make(map[uint64][]*biz.Device, len(source))
 	for key, devices := range source {
 		copied := make([]*biz.Device, 0, len(devices))
 		for _, device := range devices {

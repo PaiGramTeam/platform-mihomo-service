@@ -1,3 +1,21 @@
+ALTER TABLE device_records
+    ADD COLUMN binding_id BIGINT UNSIGNED NULL AFTER id;
+
+UPDATE device_records d
+JOIN credential_records c ON c.platform_account_id = d.platform_account_id
+SET d.binding_id = c.binding_id
+WHERE d.binding_id IS NULL;
+
+ALTER TABLE device_records
+    MODIFY COLUMN binding_id BIGINT UNSIGNED NOT NULL,
+    DROP INDEX uniq_device_record,
+    ADD UNIQUE KEY uniq_device_record_binding (binding_id, device_id),
+    ADD KEY idx_device_binding_id (binding_id);
+
+ALTER TABLE account_profiles
+    DROP INDEX uniq_platform_profile,
+    ADD UNIQUE KEY uniq_profile_binding_player_region (binding_id, player_id, region);
+
 CREATE TABLE IF NOT EXISTS consumer_grant_invalidations (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     binding_id BIGINT UNSIGNED NOT NULL,

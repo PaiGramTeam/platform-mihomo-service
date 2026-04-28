@@ -111,7 +111,7 @@ func (uc *ProfileUsecase) ConfirmPrimaryProfileWithScope(ctx context.Context, gu
 	if err := guard.RequirePlatformAccountID(platformAccountID); err != nil {
 		return nil, err
 	}
-	profiles, selected, err := uc.findProfileByPlayerID(ctx, platformAccountID, playerID)
+	profiles, selected, err := uc.findProfileByBindingAndPlayerID(ctx, guard.BindingID, platformAccountID, playerID)
 	if err != nil {
 		return nil, err
 	}
@@ -142,10 +142,17 @@ func (uc *ProfileUsecase) listScopedProfiles(ctx context.Context, guard ScopeGua
 	if err := guard.RequirePlatformAccountID(platformAccountID); err != nil {
 		return nil, err
 	}
-	profiles, err := uc.profileRepo.ListByPlatformAccountID(ctx, platformAccountID)
+	profiles, err := uc.profileRepo.ListByBindingID(ctx, guard.BindingID)
 	if err != nil {
 		return nil, err
 	}
+	filteredByAccount := profiles[:0]
+	for _, profile := range profiles {
+		if profile.PlatformAccountID == platformAccountID {
+			filteredByAccount = append(filteredByAccount, profile)
+		}
+	}
+	profiles = filteredByAccount
 	if guard.ProfileID == 0 {
 		return profiles, nil
 	}
@@ -172,6 +179,28 @@ func (uc *ProfileUsecase) findProfileByPlayerID(ctx context.Context, platformAcc
 		}
 	}
 	return profiles, nil, ErrProfileNotFound
+}
+
+func (uc *ProfileUsecase) findProfileByBindingAndPlayerID(ctx context.Context, bindingID uint64, platformAccountID string, playerID string) ([]*biz.Profile, *biz.Profile, error) {
+	profiles, err := uc.profileRepo.ListByBindingID(ctx, bindingID)
+	if err != nil {
+		return nil, nil, err
+	}
+	filtered := profiles[:0]
+	var selected *biz.Profile
+	for _, profile := range profiles {
+		if profile.PlatformAccountID != platformAccountID {
+			continue
+		}
+		filtered = append(filtered, profile)
+		if profile.PlayerID == playerID {
+			selected = profile
+		}
+	}
+	if selected != nil {
+		return filtered, selected, nil
+	}
+	return filtered, nil, ErrProfileNotFound
 }
 
 func toProfileSummary(profile *biz.Profile) *v1.ProfileSummary {

@@ -677,25 +677,49 @@ func (r *memoryCredentialRepo) DeleteByPlatformAccountID(_ context.Context, plat
 
 type memoryDeviceRepo struct {
 	byPlatformAccountID map[string][]*biz.Device
+	byBindingID         map[uint64][]*biz.Device
 }
 
 func newMemoryDeviceRepo() *memoryDeviceRepo {
-	return &memoryDeviceRepo{byPlatformAccountID: make(map[string][]*biz.Device)}
+	return &memoryDeviceRepo{
+		byPlatformAccountID: make(map[string][]*biz.Device),
+		byBindingID:         make(map[uint64][]*biz.Device),
+	}
 }
 
 func (r *memoryDeviceRepo) Save(_ context.Context, device *biz.Device) error {
 	clone := *device
 	current := r.byPlatformAccountID[device.PlatformAccountID]
+	byBinding := r.byBindingID[device.BindingID]
 	for index, existing := range current {
 		if existing.DeviceID == device.DeviceID {
 			current[index] = &clone
 			r.byPlatformAccountID[device.PlatformAccountID] = current
+			for bindingIndex, bindingDevice := range byBinding {
+				if bindingDevice.DeviceID == device.DeviceID {
+					byBinding[bindingIndex] = &clone
+					r.byBindingID[device.BindingID] = byBinding
+					return nil
+				}
+			}
 			return nil
 		}
 	}
 
 	r.byPlatformAccountID[device.PlatformAccountID] = append(current, &clone)
+	r.byBindingID[device.BindingID] = append(byBinding, &clone)
 	return nil
+}
+
+func (r *memoryDeviceRepo) ListByBindingID(_ context.Context, bindingID uint64) ([]*biz.Device, error) {
+	devices := r.byBindingID[bindingID]
+	result := make([]*biz.Device, 0, len(devices))
+	for _, device := range devices {
+		clone := *device
+		result = append(result, &clone)
+	}
+
+	return result, nil
 }
 
 func (r *memoryDeviceRepo) ListByPlatformAccountID(_ context.Context, platformAccountID string) ([]*biz.Device, error) {
@@ -710,7 +734,30 @@ func (r *memoryDeviceRepo) ListByPlatformAccountID(_ context.Context, platformAc
 }
 
 func (r *memoryDeviceRepo) DeleteByPlatformAccountID(_ context.Context, platformAccountID string) error {
+	if devices := r.byPlatformAccountID[platformAccountID]; len(devices) > 0 {
+		bindingID := devices[0].BindingID
+		current := r.byBindingID[bindingID]
+		filtered := make([]*biz.Device, 0, len(current))
+		for _, device := range current {
+			if device.PlatformAccountID != platformAccountID {
+				filtered = append(filtered, device)
+			}
+		}
+		if len(filtered) == 0 {
+			delete(r.byBindingID, bindingID)
+		} else {
+			r.byBindingID[bindingID] = filtered
+		}
+	}
 	delete(r.byPlatformAccountID, platformAccountID)
+	return nil
+}
+
+func (r *memoryDeviceRepo) DeleteByBindingID(_ context.Context, bindingID uint64) error {
+	for _, device := range r.byBindingID[bindingID] {
+		delete(r.byPlatformAccountID, device.PlatformAccountID)
+	}
+	delete(r.byBindingID, bindingID)
 	return nil
 }
 
@@ -800,6 +847,39 @@ func (r *memoryProfileRepo) DeleteMissingByPlatformAccountID(_ context.Context, 
 		return nil
 	}
 	r.byBindingID[filtered[0].BindingID] = filtered
+	return nil
+}
+
+func (r *memoryProfileRepo) DeleteMissingByBindingID(_ context.Context, bindingID uint64, keep []biz.ProfileIdentity) error {
+	profiles := r.byBindingID[bindingID]
+	keepSet := make(map[string]struct{}, len(keep))
+	for _, identity := range keep {
+		keepSet[identity.PlayerID+":"+identity.Region] = struct{}{}
+	}
+	filtered := make([]*biz.Profile, 0, len(profiles))
+	for _, profile := range profiles {
+		if _, ok := keepSet[profile.PlayerID+":"+profile.Region]; ok {
+			filtered = append(filtered, profile)
+		}
+	}
+	r.byBindingID[bindingID] = filtered
+	for platformAccountID, platformProfiles := range r.byPlatformAccountID {
+		filteredByAccount := platformProfiles[:0]
+		for _, profile := range platformProfiles {
+			if profile.BindingID != bindingID {
+				filteredByAccount = append(filteredByAccount, profile)
+				continue
+			}
+			if _, ok := keepSet[profile.PlayerID+":"+profile.Region]; ok {
+				filteredByAccount = append(filteredByAccount, profile)
+			}
+		}
+		if len(filteredByAccount) == 0 {
+			delete(r.byPlatformAccountID, platformAccountID)
+		} else {
+			r.byPlatformAccountID[platformAccountID] = filteredByAccount
+		}
+	}
 	return nil
 }
 

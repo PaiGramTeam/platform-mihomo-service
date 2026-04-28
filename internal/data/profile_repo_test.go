@@ -44,3 +44,42 @@ func TestProfileRepoListByBindingIDReturnsOnlyBindingProfiles(t *testing.T) {
 	require.Equal(t, uint64(42), profiles[0].BindingID)
 	require.Equal(t, "1008611", profiles[0].PlayerID)
 }
+
+func TestProfileRepoAllowsSamePlayerAndRegionAcrossBindings(t *testing.T) {
+	db := newRepoTestDB(t)
+	repo := NewProfileRepo(db)
+	now := time.Now().UTC()
+
+	require.NoError(t, repo.Save(context.Background(), &biz.Profile{
+		BindingID:         42,
+		PlatformAccountID: "binding_42_10001",
+		GameBiz:           "hk4e_cn",
+		Region:            "cn_gf01",
+		PlayerID:          "1008611",
+		Nickname:          "Traveler",
+		Level:             60,
+		IsDefault:         true,
+		DiscoveredAt:      now,
+	}))
+	require.NoError(t, repo.Save(context.Background(), &biz.Profile{
+		BindingID:         7,
+		PlatformAccountID: "binding_7_10001",
+		GameBiz:           "hk4e_cn",
+		Region:            "cn_gf01",
+		PlayerID:          "1008611",
+		Nickname:          "Traveler Alt",
+		Level:             55,
+		IsDefault:         true,
+		DiscoveredAt:      now,
+	}))
+
+	first, err := repo.ListByBindingID(context.Background(), 42)
+	require.NoError(t, err)
+	require.Len(t, first, 1)
+	require.Equal(t, "Traveler", first[0].Nickname)
+
+	second, err := repo.ListByBindingID(context.Background(), 7)
+	require.NoError(t, err)
+	require.Len(t, second, 1)
+	require.Equal(t, "Traveler Alt", second[0].Nickname)
+}
