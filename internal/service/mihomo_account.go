@@ -53,7 +53,11 @@ func (s *MihomoAccountService) BindCredential(ctx context.Context, req *v1.BindC
 	if err != nil {
 		return nil, err
 	}
-	if _, err := scopedGuard(claims, usecase.ActionCredentialBind); err != nil {
+	guard, err := scopedGuard(claims, usecase.ActionCredentialBind)
+	if err != nil {
+		return nil, mapUsecaseError(err)
+	}
+	if err := guard.RequireBindingWide(); err != nil {
 		return nil, mapUsecaseError(err)
 	}
 

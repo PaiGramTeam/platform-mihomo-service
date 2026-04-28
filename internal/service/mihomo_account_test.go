@@ -286,6 +286,18 @@ func TestBindCredentialRejectsMissingScope(t *testing.T) {
 	require.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
+func TestBindCredentialRejectsProfileScopedTicket(t *testing.T) {
+	svc := newMihomoAccountServiceForTest(t)
+
+	_, err := svc.BindCredential(context.Background(), &v1.BindCredentialRequest{
+		ServiceTicket:    signedServiceTicketForProfile(t, "mihomo:101", 999, "mihomo.credential.bind"),
+		CookieBundleJson: `{"account_id":"10001","cookie_token":"abc"}`,
+		Device:           &v1.DeviceInfo{DeviceId: "device-1", DeviceFp: "fp-1", DeviceName: "iPhone"},
+	})
+	require.Error(t, err)
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
 func TestGetCredentialSummaryRejectsMissingScope(t *testing.T) {
 	svc := newMihomoAccountServiceForTest(t)
 	bindResp := bindCredentialForServiceTest(t, svc)
