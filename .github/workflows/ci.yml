@@ -28,7 +28,6 @@ jobs:
           --health-interval=10s
           --health-timeout=5s
           --health-retries=10
-
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -74,6 +73,15 @@ jobs:
           --health-interval=10s
           --health-timeout=5s
           --health-retries=10
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
 
     steps:
       - name: Check out repository
@@ -95,6 +103,7 @@ jobs:
           PAI_TEST_DATABASE_PASSWORD: root
           PAI_TEST_DATABASE_DBNAME: platform_mihomo_test
           PAI_TEST_DATABASE_CONFIG: charset=utf8mb4&parseTime=True&loc=UTC&multiStatements=true
+          PAI_TEST_REDIS_ADDR: 127.0.0.1:6379
 
       - name: Upload integration coverage to Codecov
         uses: codecov/codecov-action@v5

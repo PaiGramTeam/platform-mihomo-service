@@ -3,6 +3,7 @@ package data
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -55,7 +56,8 @@ func TestCredentialRepoGetByBindingIDUsesUniqueBindingRecord(t *testing.T) {
 func newRepoTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 
-	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:%s?mode=memory&cache=shared", t.Name())), &gorm.Config{})
+	dbName := strings.NewReplacer("/", "_", "\\", "_", " ", "_").Replace(t.Name())
+	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:%s_%d?mode=memory&cache=shared", dbName, time.Now().UnixNano())), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(`CREATE TABLE credential_records (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -86,9 +88,11 @@ func newRepoTestDB(t *testing.T) *gorm.DB {
 		nickname TEXT NOT NULL,
 		level INTEGER NOT NULL DEFAULT 0,
 		is_default NUMERIC NOT NULL DEFAULT 0,
+		default_profile_marker INTEGER GENERATED ALWAYS AS (CASE WHEN is_default = 1 THEN 1 ELSE NULL END) STORED,
 		discovered_at DATETIME NOT NULL,
 		updated_at DATETIME NULL,
-		UNIQUE(binding_id, player_id, region)
+		UNIQUE(binding_id, player_id, region),
+		UNIQUE(binding_id, default_profile_marker)
 	)`).Error)
 	require.NoError(t, db.Exec(`CREATE TABLE device_records (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -102,6 +106,18 @@ func newRepoTestDB(t *testing.T) *gorm.DB {
 		created_at DATETIME NULL,
 		updated_at DATETIME NULL,
 		UNIQUE(binding_id, device_id)
+	)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE runtime_artifacts (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		binding_id INTEGER NOT NULL,
+		platform_account_id TEXT NOT NULL,
+		artifact_type TEXT NOT NULL,
+		artifact_value TEXT NOT NULL,
+		scope_key TEXT NOT NULL,
+		expires_at DATETIME NOT NULL,
+		created_at DATETIME NULL,
+		updated_at DATETIME NULL,
+		UNIQUE(binding_id, artifact_type, scope_key)
 	)`).Error)
 	return db
 }

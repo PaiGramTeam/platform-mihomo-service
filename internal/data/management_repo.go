@@ -2,7 +2,6 @@ package data
 
 import (
 	"context"
-	"errors"
 
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
@@ -21,9 +20,22 @@ func NewManagementRepo(db *gorm.DB, redisClient *redis.Client, prefix string) *M
 }
 
 func (r *ManagementRepo) DeleteCredentialGraph(ctx context.Context, platformAccountID string) error {
+	artifactRepo := NewArtifactRepo(r.db, r.redis, r.prefix)
 	if err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("platform_account_id = ?", platformAccountID).Delete(&model.RuntimeArtifact{}).Error; err != nil {
+		bindingIDs, err := r.bindingIDsForPlatformAccountID(ctx, tx, platformAccountID)
+		if err != nil {
 			return err
+		}
+		if len(bindingIDs) == 0 {
+			if err := artifactRepo.deleteByPlatformAccountID(ctx, tx, platformAccountID); err != nil {
+				return err
+			}
+		} else {
+			for _, bindingID := range bindingIDs {
+				if err := artifactRepo.deleteByBindingID(ctx, tx, bindingID); err != nil {
+					return err
+				}
+			}
 		}
 		if err := tx.Where("platform_account_id = ?", platformAccountID).Delete(&model.AccountProfile{}).Error; err != nil {
 			return err
@@ -39,32 +51,39 @@ func (r *ManagementRepo) DeleteCredentialGraph(ctx context.Context, platformAcco
 		return err
 	}
 
-	if r.redis != nil {
-		artifactRepo := NewArtifactRepo(r.db, r.redis, r.prefix)
-		if err := artifactRepo.DeleteByPlatformAccountID(ctx, platformAccountID); err != nil {
-			return err
-		}
-	}
-
 	return nil
 }
 
-func (r *ManagementRepo) DeleteCredentialGraphByBindingID(ctx context.Context, bindingID uint64) error {
-	var platformAccountID string
-	if err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var credential model.CredentialRecord
-		if err := tx.Where("binding_id = ?", bindingID).Take(&credential).Error; err != nil {
-			if !errors.Is(err, gorm.ErrRecordNotFound) {
-				return err
-			}
-		} else {
-			platformAccountID = credential.PlatformAccountID
+func (r *ManagementRepo) bindingIDsForPlatformAccountID(ctx context.Context, tx *gorm.DB, platformAccountID string) ([]uint64, error) {
+	var rows []struct {
+		BindingID uint64
+	}
+	err := tx.WithContext(ctx).Raw(`
+		SELECT DISTINCT binding_id FROM credential_records WHERE platform_account_id = ?
+		UNION
+		SELECT DISTINCT binding_id FROM runtime_artifacts WHERE platform_account_id = ?
+		UNION
+		SELECT DISTINCT binding_id FROM account_profiles WHERE platform_account_id = ?
+		UNION
+		SELECT DISTINCT binding_id FROM device_records WHERE platform_account_id = ?
+	`, platformAccountID, platformAccountID, platformAccountID, platformAccountID).Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	bindingIDs := make([]uint64, 0, len(rows))
+	for _, row := range rows {
+		if row.BindingID != 0 {
+			bindingIDs = append(bindingIDs, row.BindingID)
 		}
+	}
+	return bindingIDs, nil
+}
 
-		if platformAccountID != "" {
-			if err := tx.Where("platform_account_id = ?", platformAccountID).Delete(&model.RuntimeArtifact{}).Error; err != nil {
-				return err
-			}
+func (r *ManagementRepo) DeleteCredentialGraphByBindingID(ctx context.Context, bindingID uint64) error {
+	artifactRepo := NewArtifactRepo(r.db, r.redis, r.prefix)
+	if err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := artifactRepo.deleteByBindingID(ctx, tx, bindingID); err != nil {
+			return err
 		}
 		if err := tx.Where("binding_id = ?", bindingID).Delete(&model.AccountProfile{}).Error; err != nil {
 			return err
@@ -78,13 +97,6 @@ func (r *ManagementRepo) DeleteCredentialGraphByBindingID(ctx context.Context, b
 		return nil
 	}); err != nil {
 		return err
-	}
-
-	if r.redis != nil && platformAccountID != "" {
-		artifactRepo := NewArtifactRepo(r.db, r.redis, r.prefix)
-		if err := artifactRepo.DeleteByPlatformAccountID(ctx, platformAccountID); err != nil {
-			return err
-		}
 	}
 
 	return nil

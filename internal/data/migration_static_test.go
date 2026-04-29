@@ -56,6 +56,28 @@ func TestBindingIDBackfillMigrationPrechecksLegacyAccountIDsBeforeDDL(t *testing
 	require.Contains(t, normalized, "UNIQ_CREDENTIAL_BINDING_ID")
 }
 
+func TestRuntimeArtifactMigrationPrechecksHazardsBeforeDDL(t *testing.T) {
+	migration := readMigrationForStaticTest(t, "000007_binding_first_runtime_artifacts_and_primary_profile.up.sql")
+	normalized := normalizeSQLForStaticTest(migration)
+
+	firstAlter := strings.Index(normalized, "ALTER TABLE")
+	require.NotEqual(t, -1, firstAlter)
+
+	assertBeforeFirstAlter(t, normalized, firstAlter, "MULTIPLE DEFAULT ACCOUNT_PROFILES ROWS FOR BINDING_ID")
+	assertBeforeFirstAlter(t, normalized, firstAlter, "RUNTIME_ARTIFACTS ROWS WITHOUT CREDENTIAL BINDING_ID MAPPING")
+	assertBeforeFirstAlter(t, normalized, firstAlter, "DUPLICATE RUNTIME_ARTIFACTS ROWS FOR BINDING_ID, ARTIFACT_TYPE, SCOPE_KEY")
+}
+
+func TestRuntimeArtifactMigrationRollbackPrechecksPlatformUniquenessBeforeDDL(t *testing.T) {
+	migration := readMigrationForStaticTest(t, "000007_binding_first_runtime_artifacts_and_primary_profile.down.sql")
+	normalized := normalizeSQLForStaticTest(migration)
+
+	firstAlter := strings.Index(normalized, "ALTER TABLE")
+	require.NotEqual(t, -1, firstAlter)
+
+	assertBeforeFirstAlter(t, normalized, firstAlter, "RUNTIME_ARTIFACTS ROWS WOULD VIOLATE PLATFORM_ACCOUNT_ID UNIQUENESS")
+}
+
 func TestDestructiveTableMutationPatternDetectsMultiTableDrop(t *testing.T) {
 	profilePattern := destructiveTableMutationPattern("ACCOUNT_PROFILES")
 	devicePattern := destructiveTableMutationPattern("DEVICE_RECORDS")

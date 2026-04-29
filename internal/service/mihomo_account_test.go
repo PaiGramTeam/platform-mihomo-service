@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -627,7 +628,7 @@ func newMihomoAccountServiceForTest(t *testing.T) *MihomoAccountService {
 	artifactRepo := newMemoryArtifactRepo()
 	client := platformmihomo.StubClient{}
 
-	bindUC := usecase.NewBindUsecase(credentialRepo, deviceRepo, profileRepo, client, serviceTestSigningKey)
+	bindUC := usecase.NewBindUsecase(credentialRepo, deviceRepo, profileRepo, client, serviceTestSigningKey, artifactRepo)
 	statusUC := usecase.NewStatusUsecase(credentialRepo, client, serviceTestSigningKey)
 	profileUC := usecase.NewProfileUsecase(profileRepo)
 	authkeyUC := usecase.NewAuthkeyUsecase(credentialRepo, artifactRepo, client, serviceTestSigningKey)
@@ -1010,8 +1011,18 @@ func newMemoryArtifactRepo() *memoryArtifactRepo {
 
 func (r *memoryArtifactRepo) Put(_ context.Context, artifact *biz.Artifact) error {
 	clone := *artifact
-	r.artifacts[artifactKey(artifact.PlatformAccountID, artifact.ArtifactType, artifact.ScopeKey)] = &clone
+	r.artifacts[bindingArtifactKey(artifact.BindingID, artifact.ArtifactType, artifact.ScopeKey)] = &clone
 	return nil
+}
+
+func (r *memoryArtifactRepo) GetByBindingID(_ context.Context, bindingID uint64, artifactType, scopeKey string) (*biz.Artifact, error) {
+	artifact := r.artifacts[bindingArtifactKey(bindingID, artifactType, scopeKey)]
+	if artifact == nil || !artifact.ExpiresAt.After(time.Now()) {
+		return nil, nil
+	}
+
+	clone := *artifact
+	return &clone, nil
 }
 
 func (r *memoryArtifactRepo) Get(_ context.Context, platformAccountID, artifactType, scopeKey string) (*biz.Artifact, error) {
@@ -1033,8 +1044,21 @@ func (r *memoryArtifactRepo) DeleteByPlatformAccountID(_ context.Context, platfo
 	return nil
 }
 
+func (r *memoryArtifactRepo) DeleteByBindingID(_ context.Context, bindingID uint64) error {
+	for key, artifact := range r.artifacts {
+		if artifact.BindingID == bindingID {
+			delete(r.artifacts, key)
+		}
+	}
+	return nil
+}
+
 func artifactKey(platformAccountID, artifactType, scopeKey string) string {
 	return platformAccountID + ":" + artifactType + ":" + scopeKey
+}
+
+func bindingArtifactKey(bindingID uint64, artifactType, scopeKey string) string {
+	return strconv.FormatUint(bindingID, 10) + ":" + artifactType + ":" + scopeKey
 }
 
 var _ biz.CredentialRepository = (*memoryCredentialRepo)(nil)

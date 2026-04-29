@@ -61,7 +61,7 @@ func main() {
 	client := platformmihomo.UnconfiguredClient{}
 	ticketVerifier := data.NewTicketVerifier(bc.GetSecurity().GetServiceTicketIssuer(), []byte(bc.GetSecurity().GetServiceTicketSigningKey())).WithGrantVersionLookup(grantInvalidationRepo)
 
-	bindUC := usecase.NewBindUsecase(credentialRepo, deviceRepo, profileRepo, client, []byte(bc.GetSecurity().GetCredentialEncryptionKey()))
+	bindUC := usecase.NewBindUsecase(credentialRepo, deviceRepo, profileRepo, client, []byte(bc.GetSecurity().GetCredentialEncryptionKey()), artifactRepo)
 	statusUC := usecase.NewStatusUsecase(credentialRepo, client, []byte(bc.GetSecurity().GetCredentialEncryptionKey()))
 	profileUC := usecase.NewProfileUsecase(profileRepo)
 	authkeyUC := usecase.NewAuthkeyUsecase(credentialRepo, artifactRepo, client, []byte(bc.GetSecurity().GetCredentialEncryptionKey()))

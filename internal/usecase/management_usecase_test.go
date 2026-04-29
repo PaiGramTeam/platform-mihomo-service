@@ -52,7 +52,7 @@ func TestUpdateCredentialReturnsUpdatedSummary(t *testing.T) {
 func TestUpdateCredentialRejectsPlatformAccountMismatch(t *testing.T) {
 	uc := newManagementUsecaseForTest(t)
 	platformAccountID := bindCredentialForManagementTest(t, uc)
-	uc.bindUC = NewBindUsecase(uc.credentialRepo, uc.deviceRepo, uc.profileRepo, mismatchClient{}, testEncryptionKey)
+	uc.bindUC = NewBindUsecase(uc.credentialRepo, uc.deviceRepo, uc.profileRepo, mismatchClient{}, testEncryptionKey, uc.artifactRepo)
 	originalCredential, err := uc.credentialRepo.GetByPlatformAccountID(context.Background(), platformAccountID)
 	require.NoError(t, err)
 	originalDevices, err := uc.deviceRepo.ListByPlatformAccountID(context.Background(), platformAccountID)
@@ -91,7 +91,7 @@ func TestUpdateCredentialRejectsPlatformAccountMismatch(t *testing.T) {
 func TestUpdateCredentialRemovesStaleProfiles(t *testing.T) {
 	uc := newManagementUsecaseForTest(t)
 	platformAccountID := bindCredentialForManagementTest(t, uc)
-	uc.bindUC = NewBindUsecase(uc.credentialRepo, uc.deviceRepo, uc.profileRepo, profileSwitchClient{}, testEncryptionKey)
+	uc.bindUC = NewBindUsecase(uc.credentialRepo, uc.deviceRepo, uc.profileRepo, profileSwitchClient{}, testEncryptionKey, uc.artifactRepo)
 
 	summary, err := uc.UpdateCredential(context.Background(), UpdateCredentialInput{
 		PlatformAccountID: platformAccountID,
@@ -220,9 +220,9 @@ func newManagementUsecaseForTestWithClient(t *testing.T, client platformmihomo.C
 
 	bindHarness := newBindUsecaseForTest()
 	if client != nil {
-		bindHarness.BindUsecase = NewBindUsecase(bindHarness.credentialRepo, bindHarness.deviceRepo, bindHarness.profileRepo, client, testEncryptionKey)
+		bindHarness.BindUsecase = NewBindUsecase(bindHarness.credentialRepo, bindHarness.deviceRepo, bindHarness.profileRepo, client, testEncryptionKey, bindHarness.artifactRepo)
 	}
-	artifactRepo := newMemoryArtifactRepo()
+	artifactRepo := bindHarness.artifactRepo
 	managementRepo := &memoryManagementRepo{
 		credentialRepo: bindHarness.credentialRepo,
 		deviceRepo:     bindHarness.deviceRepo,

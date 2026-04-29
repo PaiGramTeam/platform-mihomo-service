@@ -73,6 +73,10 @@ func (uc *StatusUsecase) ValidateCredential(ctx context.Context, platformAccount
 	return &ValidateCredentialOutput{Status: status, ErrorCode: errCode}, nil
 }
 
+// RefreshCredential performs version 1 credential revalidation.
+// It does not rotate or replace credential material; it validates the stored
+// credential blob, updates status metadata, and records LastRefreshedAt when
+// validation succeeds.
 func (uc *StatusUsecase) RefreshCredential(ctx context.Context, platformAccountID string) (*RefreshCredentialOutput, error) {
 	credential, err := uc.getCredential(ctx, platformAccountID)
 	if err != nil {
