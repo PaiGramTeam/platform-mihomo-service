@@ -1,20 +1,22 @@
-SET @duplicate_platform_runtime_artifacts = (
-    SELECT COUNT(*)
+DROP PROCEDURE IF EXISTS migration_000007_rollback_precheck;
+CREATE PROCEDURE migration_000007_rollback_precheck()
+BEGIN
+    DECLARE duplicate_platform_runtime_artifacts BIGINT DEFAULT 0;
+
+    SELECT COUNT(*) INTO duplicate_platform_runtime_artifacts
     FROM (
         SELECT platform_account_id, artifact_type, scope_key
         FROM runtime_artifacts
         GROUP BY platform_account_id, artifact_type, scope_key
         HAVING COUNT(*) > 1
-    ) duplicates
-);
-SET @runtime_artifact_rollback_precheck = IF(
-    @duplicate_platform_runtime_artifacts > 0,
-    'SIGNAL SQLSTATE ''45000'' SET MESSAGE_TEXT = ''migration 000007 rollback failed: runtime_artifacts rows would violate platform_account_id uniqueness''',
-    'DO 0'
-);
-PREPARE runtime_artifact_rollback_precheck_stmt FROM @runtime_artifact_rollback_precheck;
-EXECUTE runtime_artifact_rollback_precheck_stmt;
-DEALLOCATE PREPARE runtime_artifact_rollback_precheck_stmt;
+    ) duplicates;
+    IF duplicate_platform_runtime_artifacts > 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'migration 000007 rollback failed: runtime_artifacts rows would violate platform_account_id uniqueness';
+    END IF;
+END;
+CALL migration_000007_rollback_precheck();
+DROP PROCEDURE migration_000007_rollback_precheck;
 
 ALTER TABLE runtime_artifacts
     DROP INDEX uniq_runtime_artifact_binding,

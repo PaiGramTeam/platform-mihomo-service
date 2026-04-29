@@ -14,8 +14,8 @@ func TestBindingFirstMigrationDoesNotDeleteRows(t *testing.T) {
 	migration := readMigrationForStaticTest(t, "000006_binding_first_devices_profiles_and_grant_invalidations.up.sql")
 	normalized := normalizeSQLForStaticTest(migration)
 
-	require.Regexp(t, regexp.MustCompile(`(?is)SIGNAL\s+SQLSTATE\s+''45000''[^;]*DEVICE_RECORDS`), migration)
-	require.Regexp(t, regexp.MustCompile(`(?is)SIGNAL\s+SQLSTATE\s+''45000''[^;]*ACCOUNT_PROFILES`), migration)
+	require.Regexp(t, regexp.MustCompile(`(?is)SIGNAL\s+SQLSTATE\s+'45000'[^;]*DEVICE_RECORDS`), migration)
+	require.Regexp(t, regexp.MustCompile(`(?is)SIGNAL\s+SQLSTATE\s+'45000'[^;]*ACCOUNT_PROFILES`), migration)
 	assertNoDestructiveTableMutation(t, normalized, "DEVICE_RECORDS")
 	assertNoDestructiveTableMutation(t, normalized, "ACCOUNT_PROFILES")
 }
