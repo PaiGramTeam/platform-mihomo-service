@@ -2,14 +2,18 @@ package data
 
 import (
 	"context"
+	"errors"
 	"strings"
 
+	"github.com/go-sql-driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
 	"platform-mihomo-service/internal/biz"
 	"platform-mihomo-service/internal/data/model"
 )
+
+var ErrDefaultProfileAlreadyExists = errors.New("default profile already exists for binding")
 
 type ProfileRepo struct {
 	db *gorm.DB
@@ -20,6 +24,7 @@ func NewProfileRepo(db *gorm.DB) *ProfileRepo {
 }
 
 func (r *ProfileRepo) Save(ctx context.Context, profile *biz.Profile) error {
+	db := dbFromContext(ctx, r.db)
 	record := model.AccountProfile{
 		BindingID:         profile.BindingID,
 		PlatformAccountID: profile.PlatformAccountID,
@@ -31,17 +36,96 @@ func (r *ProfileRepo) Save(ctx context.Context, profile *biz.Profile) error {
 		IsDefault:         profile.IsDefault,
 		DiscoveredAt:      profile.DiscoveredAt,
 	}
+	if profile.IsDefault {
+		return saveDefaultProfile(db, profile, &record)
+	}
 
-	return dbFromContext(ctx, r.db).Clauses(clause.OnConflict{
+	return db.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "binding_id"}, {Name: "player_id"}, {Name: "region"}},
 		DoUpdates: clause.AssignmentColumns([]string{"platform_account_id", "game_biz", "nickname", "level", "is_default", "updated_at"}),
 	}).Create(&record).Error
 }
 
 func (r *ProfileRepo) SetDefaultByBindingAndPlayerID(ctx context.Context, bindingID uint64, platformAccountID string, playerID string) error {
-	return dbFromContext(ctx, r.db).Model(&model.AccountProfile{}).
-		Where("binding_id = ? AND platform_account_id = ?", bindingID, platformAccountID).
-		Update("is_default", gorm.Expr("player_id = ?", playerID)).Error
+	return dbFromContext(ctx, r.db).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&model.AccountProfile{}).
+			Where("binding_id = ? AND is_default = ?", bindingID, true).
+			Update("is_default", false).Error; err != nil {
+			return err
+		}
+
+		result := tx.Model(&model.AccountProfile{}).
+			Where("binding_id = ? AND platform_account_id = ? AND player_id = ?", bindingID, platformAccountID, playerID).
+			Update("is_default", true)
+		if err := mapDefaultProfileDuplicateError(result.Error); err != nil {
+			return err
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		return nil
+	})
+}
+
+func saveDefaultProfile(db *gorm.DB, profile *biz.Profile, record *model.AccountProfile) error {
+	var existing model.AccountProfile
+	err := db.Where("binding_id = ? AND player_id = ? AND region = ?", profile.BindingID, profile.PlayerID, profile.Region).
+		Take(&existing).Error
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+
+	if existing.ID != 0 {
+		if err := ensureNoConflictingDefaultProfile(db, profile, existing.ID); err != nil {
+			return err
+		}
+		return mapDefaultProfileDuplicateError(db.Model(&model.AccountProfile{}).
+			Where("id = ?", existing.ID).
+			Updates(map[string]any{
+				"platform_account_id": profile.PlatformAccountID,
+				"game_biz":            profile.GameBiz,
+				"nickname":            profile.Nickname,
+				"level":               profile.Level,
+				"is_default":          true,
+			}).Error)
+	}
+
+	if err := ensureNoConflictingDefaultProfile(db, profile, 0); err != nil {
+		return err
+	}
+	return mapDefaultProfileDuplicateError(db.Create(record).Error)
+}
+
+func ensureNoConflictingDefaultProfile(db *gorm.DB, profile *biz.Profile, excludeID uint64) error {
+	query := db.Model(&model.AccountProfile{}).
+		Where("binding_id = ? AND is_default = ?", profile.BindingID, true).
+		Where("NOT (binding_id = ? AND player_id = ? AND region = ?)", profile.BindingID, profile.PlayerID, profile.Region)
+	if excludeID != 0 {
+		query = query.Where("id <> ?", excludeID)
+	}
+
+	var count int64
+	if err := query.Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		return ErrDefaultProfileAlreadyExists
+	}
+	return nil
+}
+
+func mapDefaultProfileDuplicateError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var mysqlErr *mysql.MySQLError
+	if errors.As(err, &mysqlErr) && mysqlErr.Number == 1062 && strings.Contains(mysqlErr.Message, "uniq_default_profile_per_binding") {
+		return ErrDefaultProfileAlreadyExists
+	}
+	if strings.Contains(err.Error(), "default_profile_marker") || strings.Contains(err.Error(), "uniq_default_profile_per_binding") {
+		return ErrDefaultProfileAlreadyExists
+	}
+	return err
 }
 
 func (r *ProfileRepo) ListByBindingID(ctx context.Context, bindingID uint64) ([]*biz.Profile, error) {

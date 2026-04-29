@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -206,6 +207,170 @@ func TestBindCredentialRebindRemovesOldPlatformScopedRows(t *testing.T) {
 	require.Equal(t, "device-new", devices[0].DeviceID)
 }
 
+func TestBindCredentialRebindInvalidatesBindingScopedArtifacts(t *testing.T) {
+	client := &sequentialMihomoClient{
+		results: []mihomoValidateResult{
+			{
+				accountID: "10001",
+				region:    "cn_gf01",
+				profiles: []platformmihomo.DiscoveredProfile{{
+					GameBiz:  "hk4e_cn",
+					Region:   "cn_gf01",
+					PlayerID: "1008611",
+					Nickname: "Traveler",
+					Level:    60,
+				}},
+			},
+			{
+				accountID: "20002",
+				region:    "cn_gf01",
+				profiles: []platformmihomo.DiscoveredProfile{{
+					GameBiz:  "hk4e_cn",
+					Region:   "cn_gf01",
+					PlayerID: "1008611",
+					Nickname: "Rebound",
+					Level:    55,
+				}},
+			},
+		},
+	}
+	uc := newBindUsecaseForTestWithClient(client)
+	uc.artifactRepo = newMemoryArtifactRepo()
+	uc.BindUsecase.artifactRepo = uc.artifactRepo
+
+	first, err := uc.BindCredential(context.Background(), BindCredentialInput{
+		BindingID:        42,
+		CookieBundleJSON: `{"account_id":"10001","cookie_token":"abc"}`,
+		DeviceID:         "device-old",
+		DeviceFP:         "fp-old",
+	})
+	require.NoError(t, err)
+	require.NoError(t, uc.artifactRepo.Put(context.Background(), &biz.Artifact{
+		BindingID:         42,
+		PlatformAccountID: first.PlatformAccountID,
+		ArtifactType:      authKeyArtifactType,
+		ArtifactValue:     "stale-authkey",
+		ScopeKey:          "1008611",
+		ExpiresAt:         time.Now().UTC().Add(time.Hour),
+	}))
+
+	_, err = uc.BindCredential(context.Background(), BindCredentialInput{
+		BindingID:        42,
+		CookieBundleJSON: `{"account_id":"20002","cookie_token":"def"}`,
+		DeviceID:         "device-new",
+		DeviceFP:         "fp-new",
+	})
+	require.NoError(t, err)
+
+	artifact, err := uc.artifactRepo.GetByBindingID(context.Background(), 42, authKeyArtifactType, "1008611")
+	require.NoError(t, err)
+	require.Nil(t, artifact)
+}
+
+func TestBindCredentialFreshBindInvalidatesOrphanBindingScopedArtifacts(t *testing.T) {
+	uc := newBindUsecaseForTest()
+	require.NoError(t, uc.artifactRepo.Put(context.Background(), &biz.Artifact{
+		BindingID:         42,
+		PlatformAccountID: "binding_42_old",
+		ArtifactType:      authKeyArtifactType,
+		ArtifactValue:     "orphan-authkey",
+		ScopeKey:          "1008611",
+		ExpiresAt:         time.Now().UTC().Add(time.Hour),
+	}))
+
+	_, err := uc.BindCredential(context.Background(), BindCredentialInput{
+		BindingID:        42,
+		CookieBundleJSON: `{"account_id":"10001","cookie_token":"abc"}`,
+		DeviceID:         "device-new",
+		DeviceFP:         "fp-new",
+	})
+	require.NoError(t, err)
+
+	artifact, err := uc.artifactRepo.GetByBindingID(context.Background(), 42, authKeyArtifactType, "1008611")
+	require.NoError(t, err)
+	require.Nil(t, artifact)
+}
+
+func TestBindCredentialRollbackRestoresArtifactsDeletedDuringTransaction(t *testing.T) {
+	uc := newBindUsecaseForTest()
+	require.NoError(t, uc.artifactRepo.Put(context.Background(), &biz.Artifact{
+		BindingID:         42,
+		PlatformAccountID: "binding_42_old",
+		ArtifactType:      authKeyArtifactType,
+		ArtifactValue:     "rollback-authkey",
+		ScopeKey:          "1008611",
+		ExpiresAt:         time.Now().UTC().Add(time.Hour),
+	}))
+	uc.profileRepo.failSave = true
+
+	_, err := uc.BindCredential(context.Background(), BindCredentialInput{
+		BindingID:        42,
+		CookieBundleJSON: `{"account_id":"10001","cookie_token":"abc"}`,
+		DeviceID:         "device-new",
+		DeviceFP:         "fp-new",
+	})
+	require.Error(t, err)
+
+	artifact, err := uc.artifactRepo.GetByBindingID(context.Background(), 42, authKeyArtifactType, "1008611")
+	require.NoError(t, err)
+	require.NotNil(t, artifact)
+	require.Equal(t, "rollback-authkey", artifact.ArtifactValue)
+}
+
+func TestBindCredentialRebindRemovesOldDefaultProfileBeforeSavingNewDefault(t *testing.T) {
+	client := &sequentialMihomoClient{
+		results: []mihomoValidateResult{
+			{
+				accountID: "10001",
+				region:    "cn_gf01",
+				profiles: []platformmihomo.DiscoveredProfile{{
+					GameBiz:  "hk4e_cn",
+					Region:   "cn_gf01",
+					PlayerID: "1008611",
+					Nickname: "Traveler",
+					Level:    60,
+				}},
+			},
+			{
+				accountID: "20002",
+				region:    "cn_gf01",
+				profiles: []platformmihomo.DiscoveredProfile{{
+					GameBiz:  "hk4e_cn",
+					Region:   "cn_gf01",
+					PlayerID: "2008622",
+					Nickname: "Rebound",
+					Level:    55,
+				}},
+			},
+		},
+	}
+	uc := newBindUsecaseForTestWithClient(client)
+
+	first, err := uc.BindCredential(context.Background(), BindCredentialInput{
+		BindingID:        42,
+		CookieBundleJSON: `{"account_id":"10001","cookie_token":"abc"}`,
+		DeviceID:         "device-old",
+		DeviceFP:         "fp-old",
+	})
+	require.NoError(t, err)
+
+	second, err := uc.BindCredential(context.Background(), BindCredentialInput{
+		BindingID:        42,
+		CookieBundleJSON: `{"account_id":"20002","cookie_token":"def"}`,
+		DeviceID:         "device-new",
+		DeviceFP:         "fp-new",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "binding_42_20002", second.PlatformAccountID)
+	require.NotContains(t, uc.profileRepo.byPlatformAccountID, first.PlatformAccountID)
+
+	profiles, err := uc.profileRepo.ListByBindingID(context.Background(), 42)
+	require.NoError(t, err)
+	require.Len(t, profiles, 1)
+	require.True(t, profiles[0].IsDefault)
+	require.Equal(t, second.PlatformAccountID, profiles[0].PlatformAccountID)
+}
+
 func TestBindCredentialRebindRollbackRestoresPreviousBindingState(t *testing.T) {
 	client := &sequentialMihomoClient{
 		results: []mihomoValidateResult{
@@ -401,6 +566,7 @@ type bindUsecaseTestHarness struct {
 	credentialRepo *memoryCredentialRepo
 	deviceRepo     *memoryDeviceRepo
 	profileRepo    *memoryProfileRepo
+	artifactRepo   *memoryArtifactRepo
 	profileUsecase *ProfileUsecase
 }
 
@@ -412,19 +578,22 @@ func newBindUsecaseForTestWithClient(client platformmihomo.Client) *bindUsecaseT
 	credentialRepo := newMemoryCredentialRepo()
 	deviceRepo := newMemoryDeviceRepo()
 	profileRepo := newMemoryProfileRepo()
+	artifactRepo := newMemoryArtifactRepo()
 	credentialRepo.deviceRepo = deviceRepo
 	credentialRepo.profileRepo = profileRepo
+	credentialRepo.artifactRepo = artifactRepo
 	if observingClient, ok := client.(*transactionObservingClient); ok {
 		observingClient.repo = credentialRepo
 	}
 
-	bindUsecase := NewBindUsecase(credentialRepo, deviceRepo, profileRepo, client, testEncryptionKey)
+	bindUsecase := NewBindUsecase(credentialRepo, deviceRepo, profileRepo, client, testEncryptionKey, artifactRepo)
 
 	return &bindUsecaseTestHarness{
 		BindUsecase:    bindUsecase,
 		credentialRepo: credentialRepo,
 		deviceRepo:     deviceRepo,
 		profileRepo:    profileRepo,
+		artifactRepo:   artifactRepo,
 		profileUsecase: NewProfileUsecase(profileRepo),
 	}
 }
@@ -477,6 +646,7 @@ func (c *mutatingMihomoClient) ValidateAndDiscover(_ context.Context, _ string, 
 		}
 		_ = c.repo.Save(context.Background(), credential)
 		_ = c.deviceRepo.Save(context.Background(), &biz.Device{BindingID: c.bindingID, PlatformAccountID: c.newAccountID, DeviceID: "device-mutated", DeviceFP: "fp-mutated", IsValid: true})
+		_ = c.profileRepo.DeleteMissingByBindingID(context.Background(), c.bindingID, nil)
 		_ = c.profileRepo.Save(context.Background(), &biz.Profile{BindingID: c.bindingID, PlatformAccountID: c.newAccountID, GameBiz: "hk4e_cn", Region: "cn_gf01", PlayerID: "3008611", Nickname: "Mutated", Level: 60, IsDefault: true})
 		c.mutated = true
 	}
@@ -519,6 +689,7 @@ type memoryCredentialRepo struct {
 	byBindingID         map[uint64]*biz.Credential
 	deviceRepo          *memoryDeviceRepo
 	profileRepo         *memoryProfileRepo
+	artifactRepo        *memoryArtifactRepo
 	inTransaction       bool
 }
 
@@ -571,6 +742,7 @@ func (r *memoryCredentialRepo) WithinTransaction(ctx context.Context, fn func(co
 	deviceByBinding := cloneDeviceMapByBindingID(r.deviceRepo.byBindingID)
 	profileByPlatform := cloneProfileMapByPlatformAccountID(r.profileRepo.byPlatformAccountID)
 	profileByBinding := cloneProfileMapByBindingID(r.profileRepo.byBindingID)
+	artifactByKey := cloneArtifactMap(r.artifactRepo.artifacts)
 	r.inTransaction = true
 	defer func() {
 		r.inTransaction = false
@@ -582,6 +754,7 @@ func (r *memoryCredentialRepo) WithinTransaction(ctx context.Context, fn func(co
 		r.deviceRepo.byBindingID = deviceByBinding
 		r.profileRepo.byPlatformAccountID = profileByPlatform
 		r.profileRepo.byBindingID = profileByBinding
+		r.artifactRepo.artifacts = artifactByKey
 		return err
 	}
 	return nil
@@ -692,6 +865,9 @@ func (r *memoryProfileRepo) Save(_ context.Context, profile *biz.Profile) error 
 	if r.failSave {
 		return errors.New("save profile failed")
 	}
+	if profile.IsDefault && r.hasConflictingDefault(profile) {
+		return errors.New("default profile already exists for binding")
+	}
 	clone := *profile
 	current := r.byPlatformAccountID[profile.PlatformAccountID]
 	byBinding := r.byBindingID[profile.BindingID]
@@ -712,6 +888,19 @@ func (r *memoryProfileRepo) Save(_ context.Context, profile *biz.Profile) error 
 	r.byPlatformAccountID[profile.PlatformAccountID] = append(current, &clone)
 	r.byBindingID[profile.BindingID] = append(byBinding, &clone)
 	return nil
+}
+
+func (r *memoryProfileRepo) hasConflictingDefault(profile *biz.Profile) bool {
+	for _, existing := range r.byBindingID[profile.BindingID] {
+		if !existing.IsDefault {
+			continue
+		}
+		if existing.PlayerID == profile.PlayerID && existing.Region == profile.Region {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 func (r *memoryProfileRepo) ListByPlatformAccountID(_ context.Context, platformAccountID string) ([]*biz.Profile, error) {
@@ -894,6 +1083,15 @@ func cloneProfileMapByBindingID(source map[uint64][]*biz.Profile) map[uint64][]*
 			copied = append(copied, &clone)
 		}
 		cloned[key] = copied
+	}
+	return cloned
+}
+
+func cloneArtifactMap(source map[string]*biz.Artifact) map[string]*biz.Artifact {
+	cloned := make(map[string]*biz.Artifact, len(source))
+	for key, artifact := range source {
+		clone := *artifact
+		cloned[key] = &clone
 	}
 	return cloned
 }

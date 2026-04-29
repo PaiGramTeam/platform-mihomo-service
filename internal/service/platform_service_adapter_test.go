@@ -158,7 +158,7 @@ func newGenericPlatformServiceForAdapterTest(store *memoryGrantInvalidationStore
 	artifactRepo := newMemoryArtifactRepo()
 	client := platformmihomo.StubClient{}
 
-	bindUC := usecase.NewBindUsecase(credentialRepo, deviceRepo, profileRepo, client, serviceTestSigningKey)
+	bindUC := usecase.NewBindUsecase(credentialRepo, deviceRepo, profileRepo, client, serviceTestSigningKey, artifactRepo)
 	profileUC := usecase.NewProfileUsecase(profileRepo)
 	managementUC := usecase.NewManagementUsecase(
 		credentialRepo,
@@ -234,7 +234,7 @@ func TestGenericPlatformServiceGetCredentialSummary(t *testing.T) {
 	artifactRepo := newMemoryArtifactRepo()
 	client := platformmihomo.StubClient{}
 
-	bindUC := usecase.NewBindUsecase(credentialRepo, deviceRepo, profileRepo, client, serviceTestSigningKey)
+	bindUC := usecase.NewBindUsecase(credentialRepo, deviceRepo, profileRepo, client, serviceTestSigningKey, artifactRepo)
 	profileUC := usecase.NewProfileUsecase(profileRepo)
 	managementUC := usecase.NewManagementUsecase(
 		credentialRepo,
@@ -279,7 +279,7 @@ func TestGenericPlatformServiceRejectsMissingSummaryScope(t *testing.T) {
 	artifactRepo := newMemoryArtifactRepo()
 	client := platformmihomo.StubClient{}
 
-	bindUC := usecase.NewBindUsecase(credentialRepo, deviceRepo, profileRepo, client, serviceTestSigningKey)
+	bindUC := usecase.NewBindUsecase(credentialRepo, deviceRepo, profileRepo, client, serviceTestSigningKey, artifactRepo)
 	profileUC := usecase.NewProfileUsecase(profileRepo)
 	managementUC := usecase.NewManagementUsecase(
 		credentialRepo,
@@ -321,7 +321,7 @@ func TestGenericPlatformServiceRejectsProfileScopedSummaryTicket(t *testing.T) {
 	artifactRepo := newMemoryArtifactRepo()
 	client := platformmihomo.StubClient{}
 
-	bindUC := usecase.NewBindUsecase(credentialRepo, deviceRepo, profileRepo, client, serviceTestSigningKey)
+	bindUC := usecase.NewBindUsecase(credentialRepo, deviceRepo, profileRepo, client, serviceTestSigningKey, artifactRepo)
 	profileUC := usecase.NewProfileUsecase(profileRepo)
 	managementUC := usecase.NewManagementUsecase(
 		credentialRepo,
@@ -357,7 +357,7 @@ func TestGenericPlatformServiceRejectsProfileScopedSummaryTicket(t *testing.T) {
 }
 
 func TestGenericPlatformServiceDescribePlatform(t *testing.T) {
-	bindUC := usecase.NewBindUsecase(newMemoryCredentialRepo(), newMemoryDeviceRepo(), newMemoryProfileRepo(), platformmihomo.StubClient{}, serviceTestSigningKey)
+	bindUC := usecase.NewBindUsecase(newMemoryCredentialRepo(), newMemoryDeviceRepo(), newMemoryProfileRepo(), platformmihomo.StubClient{}, serviceTestSigningKey, newMemoryArtifactRepo())
 	statusUC := usecase.NewStatusUsecase(newMemoryCredentialRepo(), platformmihomo.StubClient{}, serviceTestSigningKey)
 	adapter := NewGenericPlatformService(
 		data.NewTicketVerifier(serviceTestIssuer, serviceTestSigningKey),
@@ -378,7 +378,7 @@ func TestGenericPlatformServiceDescribePlatform(t *testing.T) {
 }
 
 func TestGenericPlatformServiceRegisteredOnGRPCServer(t *testing.T) {
-	bindUC := usecase.NewBindUsecase(newMemoryCredentialRepo(), newMemoryDeviceRepo(), newMemoryProfileRepo(), platformmihomo.StubClient{}, serviceTestSigningKey)
+	bindUC := usecase.NewBindUsecase(newMemoryCredentialRepo(), newMemoryDeviceRepo(), newMemoryProfileRepo(), platformmihomo.StubClient{}, serviceTestSigningKey, newMemoryArtifactRepo())
 	statusUC := usecase.NewStatusUsecase(newMemoryCredentialRepo(), platformmihomo.StubClient{}, serviceTestSigningKey)
 	adapter := NewGenericPlatformService(
 		data.NewTicketVerifier(serviceTestIssuer, serviceTestSigningKey),
@@ -412,7 +412,7 @@ func TestGenericPlatformServicePutCredentialBindsWhenPlatformAccountIDUnknown(t 
 	artifactRepo := newMemoryArtifactRepo()
 	client := platformmihomo.StubClient{}
 
-	bindUC := usecase.NewBindUsecase(credentialRepo, deviceRepo, profileRepo, client, serviceTestSigningKey)
+	bindUC := usecase.NewBindUsecase(credentialRepo, deviceRepo, profileRepo, client, serviceTestSigningKey, artifactRepo)
 	profileUC := usecase.NewProfileUsecase(profileRepo)
 	managementUC := usecase.NewManagementUsecase(
 		credentialRepo,
@@ -447,7 +447,7 @@ func TestGenericPlatformServicePutCredentialRejectsCreateWithUpdateOnlyScope(t *
 	artifactRepo := newMemoryArtifactRepo()
 	client := platformmihomo.StubClient{}
 
-	bindUC := usecase.NewBindUsecase(credentialRepo, deviceRepo, profileRepo, client, serviceTestSigningKey)
+	bindUC := usecase.NewBindUsecase(credentialRepo, deviceRepo, profileRepo, client, serviceTestSigningKey, artifactRepo)
 	profileUC := usecase.NewProfileUsecase(profileRepo)
 	managementUC := usecase.NewManagementUsecase(
 		credentialRepo,
@@ -480,7 +480,7 @@ func TestGenericPlatformServicePutCredentialRejectsUpdateWithBindOnlyScope(t *te
 	artifactRepo := newMemoryArtifactRepo()
 	client := platformmihomo.StubClient{}
 
-	bindUC := usecase.NewBindUsecase(credentialRepo, deviceRepo, profileRepo, client, serviceTestSigningKey)
+	bindUC := usecase.NewBindUsecase(credentialRepo, deviceRepo, profileRepo, client, serviceTestSigningKey, artifactRepo)
 	profileUC := usecase.NewProfileUsecase(profileRepo)
 	managementUC := usecase.NewManagementUsecase(
 		credentialRepo,
@@ -523,7 +523,7 @@ func TestGenericPlatformServiceDeleteCredentialUsesDeleteScope(t *testing.T) {
 	artifactRepo := newMemoryArtifactRepo()
 	client := platformmihomo.StubClient{}
 
-	bindUC := usecase.NewBindUsecase(credentialRepo, deviceRepo, profileRepo, client, serviceTestSigningKey)
+	bindUC := usecase.NewBindUsecase(credentialRepo, deviceRepo, profileRepo, client, serviceTestSigningKey, artifactRepo)
 	profileUC := usecase.NewProfileUsecase(profileRepo)
 	managementUC := usecase.NewManagementUsecase(
 		credentialRepo,

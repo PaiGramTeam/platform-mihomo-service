@@ -39,6 +39,7 @@ type BindUsecase struct {
 	credentialRepo biz.CredentialRepository
 	deviceRepo     biz.DeviceRepository
 	profileRepo    biz.ProfileRepository
+	artifactRepo   biz.ArtifactRepository
 	client         platformmihomo.Client
 	encryptionKey  []byte
 }
@@ -53,11 +54,13 @@ func NewBindUsecase(
 	profileRepo biz.ProfileRepository,
 	client platformmihomo.Client,
 	encryptionKey []byte,
+	artifactRepo biz.ArtifactRepository,
 ) *BindUsecase {
 	return &BindUsecase{
 		credentialRepo: credentialRepo,
 		deviceRepo:     deviceRepo,
 		profileRepo:    profileRepo,
+		artifactRepo:   artifactRepo,
 		client:         client,
 		encryptionKey:  encryptionKey,
 	}
@@ -125,6 +128,11 @@ func (uc *BindUsecase) bindPreparedCredential(ctx context.Context, input BindCre
 	if err != nil {
 		return nil, err
 	}
+	if uc.artifactRepo != nil {
+		if err := uc.artifactRepo.DeleteByBindingID(ctx, input.BindingID); err != nil {
+			return nil, err
+		}
+	}
 
 	now := time.Now().UTC()
 	if err := uc.credentialRepo.Save(ctx, &biz.Credential{
@@ -173,6 +181,15 @@ func (uc *BindUsecase) bindPreparedCredential(ctx context.Context, input BindCre
 		return nil, err
 	}
 
+	if previousPlatformAccountID != "" {
+		if err := uc.profileRepo.DeleteByPlatformAccountID(ctx, previousPlatformAccountID); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := uc.profileRepo.DeleteByPlatformAccountID(ctx, prepared.platformAccountID); err != nil {
+			return nil, err
+		}
+	}
 	outputProfiles := make([]v1.ProfileSummary, 0, len(prepared.discoveredProfiles))
 	for index, discoveredProfile := range prepared.discoveredProfiles {
 		profile := &biz.Profile{
@@ -194,9 +211,6 @@ func (uc *BindUsecase) bindPreparedCredential(ctx context.Context, input BindCre
 	}
 
 	if previousPlatformAccountID != "" {
-		if err := uc.profileRepo.DeleteByPlatformAccountID(ctx, previousPlatformAccountID); err != nil {
-			return nil, err
-		}
 		if err := uc.deviceRepo.DeleteByPlatformAccountID(ctx, previousPlatformAccountID); err != nil {
 			return nil, err
 		}

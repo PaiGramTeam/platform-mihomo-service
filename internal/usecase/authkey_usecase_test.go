@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -25,8 +26,9 @@ func TestGetAuthKeyReturnsCachedArtifactWhenPresent(t *testing.T) {
 	require.Equal(t, first.AuthKey, second.AuthKey)
 	require.Equal(t, first.ExpiresAt, second.ExpiresAt)
 	require.Equal(t, 1, client.issueAuthKeyCalls)
-	artifact := artifactRepo.artifacts[artifactKey("hoyo_10001", authKeyArtifactType, "1008611")]
+	artifact := artifactRepo.artifacts[bindingArtifactKey(101, authKeyArtifactType, "1008611")]
 	require.NotNil(t, artifact)
+	require.Equal(t, uint64(101), artifact.BindingID)
 	require.Equal(t, first.AuthKey, artifact.ArtifactValue)
 	require.WithinDuration(t, first.ExpiresAt, artifact.ExpiresAt, time.Second)
 }
@@ -50,6 +52,7 @@ func newAuthkeyUsecaseForTest(t *testing.T) (*AuthkeyUsecase, *memoryArtifactRep
 	require.NoError(t, err)
 
 	credentialRepo.byPlatformAccountID["hoyo_10001"] = &biz.Credential{
+		BindingID:         101,
 		PlatformAccountID: "hoyo_10001",
 		Platform:          "mihomo",
 		AccountID:         "10001",
@@ -72,8 +75,17 @@ func newMemoryArtifactRepo() *memoryArtifactRepo {
 
 func (r *memoryArtifactRepo) Put(_ context.Context, artifact *biz.Artifact) error {
 	clone := *artifact
-	r.artifacts[artifactKey(artifact.PlatformAccountID, artifact.ArtifactType, artifact.ScopeKey)] = &clone
+	r.artifacts[bindingArtifactKey(artifact.BindingID, artifact.ArtifactType, artifact.ScopeKey)] = &clone
 	return nil
+}
+
+func (r *memoryArtifactRepo) GetByBindingID(_ context.Context, bindingID uint64, artifactType, scopeKey string) (*biz.Artifact, error) {
+	artifact := r.artifacts[bindingArtifactKey(bindingID, artifactType, scopeKey)]
+	if artifact == nil || !artifact.ExpiresAt.After(time.Now()) {
+		return nil, nil
+	}
+	clone := *artifact
+	return &clone, nil
 }
 
 func (r *memoryArtifactRepo) Get(_ context.Context, platformAccountID, artifactType, scopeKey string) (*biz.Artifact, error) {
@@ -88,6 +100,15 @@ func (r *memoryArtifactRepo) Get(_ context.Context, platformAccountID, artifactT
 func (r *memoryArtifactRepo) DeleteByPlatformAccountID(_ context.Context, platformAccountID string) error {
 	for key, artifact := range r.artifacts {
 		if artifact.PlatformAccountID == platformAccountID {
+			delete(r.artifacts, key)
+		}
+	}
+	return nil
+}
+
+func (r *memoryArtifactRepo) DeleteByBindingID(_ context.Context, bindingID uint64) error {
+	for key, artifact := range r.artifacts {
+		if artifact.BindingID == bindingID {
 			delete(r.artifacts, key)
 		}
 	}
@@ -112,6 +133,10 @@ func (c *authkeyTestClient) IssueAuthKey(_ context.Context, cookieBundleJSON str
 
 func artifactKey(platformAccountID, artifactType, scopeKey string) string {
 	return platformAccountID + ":" + artifactType + ":" + scopeKey
+}
+
+func bindingArtifactKey(bindingID uint64, artifactType, scopeKey string) string {
+	return strconv.FormatUint(bindingID, 10) + ":" + artifactType + ":" + scopeKey
 }
 
 var _ biz.ArtifactRepository = (*memoryArtifactRepo)(nil)

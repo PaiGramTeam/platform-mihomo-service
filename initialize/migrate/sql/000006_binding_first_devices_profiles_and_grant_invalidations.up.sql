@@ -1,35 +1,32 @@
-SET @duplicate_profile_rows = (
-    SELECT COUNT(*)
+DROP PROCEDURE IF EXISTS migration_000006_precheck;
+CREATE PROCEDURE migration_000006_precheck()
+BEGIN
+    DECLARE duplicate_profile_rows BIGINT DEFAULT 0;
+    DECLARE device_backfill_failures BIGINT DEFAULT 0;
+
+    SELECT COUNT(*) INTO duplicate_profile_rows
     FROM (
         SELECT binding_id, player_id, region
         FROM account_profiles
         GROUP BY binding_id, player_id, region
         HAVING COUNT(*) > 1
-    ) duplicates
-);
-SET @profile_duplicate_precheck = IF(
-    @duplicate_profile_rows > 0,
-    'SIGNAL SQLSTATE ''45000'' SET MESSAGE_TEXT = ''migration 000006 failed: duplicate account_profiles rows for binding_id, player_id, region''',
-    'DO 0'
-);
-PREPARE profile_duplicate_precheck_stmt FROM @profile_duplicate_precheck;
-EXECUTE profile_duplicate_precheck_stmt;
-DEALLOCATE PREPARE profile_duplicate_precheck_stmt;
+    ) duplicates;
+    IF duplicate_profile_rows > 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'migration 000006 failed: duplicate account_profiles rows for binding_id, player_id, region';
+    END IF;
 
-SET @device_backfill_failures = (
-    SELECT COUNT(*)
+    SELECT COUNT(*) INTO device_backfill_failures
     FROM device_records d
     LEFT JOIN credential_records c ON c.platform_account_id = d.platform_account_id
-    WHERE c.id IS NULL
-);
-SET @device_backfill_precheck = IF(
-    @device_backfill_failures > 0,
-    'SIGNAL SQLSTATE ''45000'' SET MESSAGE_TEXT = ''migration 000006 failed: device_records rows cannot be backfilled from credential_records''',
-    'DO 0'
-);
-PREPARE device_backfill_precheck_stmt FROM @device_backfill_precheck;
-EXECUTE device_backfill_precheck_stmt;
-DEALLOCATE PREPARE device_backfill_precheck_stmt;
+    WHERE c.id IS NULL;
+    IF device_backfill_failures > 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'migration 000006 failed: device_records rows cannot be backfilled from credential_records';
+    END IF;
+END;
+CALL migration_000006_precheck();
+DROP PROCEDURE migration_000006_precheck;
 
 ALTER TABLE device_records
     ADD COLUMN binding_id BIGINT UNSIGNED NULL AFTER id;

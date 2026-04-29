@@ -124,7 +124,7 @@ func newMihomoCredentialServiceForTest(t *testing.T) *mihomoCredentialServiceTes
 	artifactRepo := newMemoryArtifactRepo()
 	client := platformmihomo.StubClient{}
 
-	bindUC := usecase.NewBindUsecase(credentialRepo, deviceRepo, profileRepo, client, serviceTestSigningKey)
+	bindUC := usecase.NewBindUsecase(credentialRepo, deviceRepo, profileRepo, client, serviceTestSigningKey, artifactRepo)
 	profileUC := usecase.NewProfileUsecase(profileRepo)
 	managementUC := usecase.NewManagementUsecase(
 		credentialRepo,

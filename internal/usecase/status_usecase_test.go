@@ -86,6 +86,33 @@ func TestRefreshCredentialDoesNotMarkRefreshedOnValidationFailure(t *testing.T) 
 	require.Nil(t, credentialRepo.byPlatformAccountID["hoyo_10001"].LastRefreshedAt)
 }
 
+func TestRefreshCredentialRevalidatesWithoutReplacingCredentialBlob(t *testing.T) {
+	credentialRepo := newMemoryCredentialRepo()
+	encryptedBlob, err := internalcrypto.EncryptString(testEncryptionKey, `{"account_id":"10001","cookie_token":"abc"}`)
+	require.NoError(t, err)
+	require.NoError(t, credentialRepo.Save(context.Background(), &biz.Credential{
+		BindingID:         101,
+		PlatformAccountID: "hoyo_10001",
+		Platform:          "mihomo",
+		AccountID:         "10001",
+		Region:            "cn_gf01",
+		CredentialBlob:    encryptedBlob,
+		CredentialVersion: "v1",
+		Status:            "active",
+	}))
+	uc := NewStatusUsecase(credentialRepo, successfulStatusClient{}, testEncryptionKey)
+
+	resp, err := uc.RefreshCredential(context.Background(), "hoyo_10001")
+	require.NoError(t, err)
+	require.Equal(t, v1.CredentialStatus_CREDENTIAL_STATUS_ACTIVE, resp.Status)
+
+	stored := credentialRepo.byPlatformAccountID["hoyo_10001"]
+	require.Equal(t, encryptedBlob, stored.CredentialBlob)
+	require.NotNil(t, stored.LastValidatedAt)
+	require.NotNil(t, stored.LastRefreshedAt)
+	require.Equal(t, stored.LastRefreshedAt, resp.RefreshedAt)
+}
+
 func TestValidateCredentialMapsChallengeRequiredStatus(t *testing.T) {
 	credentialRepo := newMemoryCredentialRepo()
 	encryptedBlob, err := internalcrypto.EncryptString(testEncryptionKey, `{"account_id":"10001","cookie_token":"abc"}`)
@@ -109,6 +136,22 @@ func TestValidateCredentialMapsChallengeRequiredStatus(t *testing.T) {
 
 type failingStatusClient struct {
 	err error
+}
+
+type successfulStatusClient struct{}
+
+func (successfulStatusClient) ValidateAndDiscover(_ context.Context, _ string, _ string) (string, string, []platformmihomo.DiscoveredProfile, error) {
+	return "10001", "cn_gf01", []platformmihomo.DiscoveredProfile{{
+		GameBiz:  "hk4e_cn",
+		Region:   "cn_gf01",
+		PlayerID: "1008611",
+		Nickname: "Traveler",
+		Level:    60,
+	}}, nil
+}
+
+func (successfulStatusClient) IssueAuthKey(_ context.Context, _ string, _ string) (string, int64, error) {
+	return "", 0, errors.New("not implemented")
 }
 
 func (c failingStatusClient) ValidateAndDiscover(_ context.Context, _ string, _ string) (string, string, []platformmihomo.DiscoveredProfile, error) {

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -55,6 +56,107 @@ func TestBindingMigrationRejectsUnknownLegacyPlatformAccountIDs(t *testing.T) {
 	}
 }
 
+func TestRuntimeArtifactMigrationRejectsDuplicateDefaultProfiles(t *testing.T) {
+	stack := newIntegrationStack(t)
+	t.Cleanup(stack.cleanup)
+	applyMigrations(t, stack.SQLDB,
+		"000001_create_credential_records.up.sql",
+		"000002_create_device_records.up.sql",
+		"000003_create_account_profiles.up.sql",
+		"000004_create_runtime_artifacts.up.sql",
+	)
+
+	insertLegacyCredential(t, stack.SQLDB, "binding_42_10001", "10001")
+	insertLegacyProfile(t, stack.SQLDB, "binding_42_10001", "1008611", true)
+	insertLegacyProfile(t, stack.SQLDB, "binding_42_10001", "1008622", true)
+	applyMigrations(t, stack.SQLDB,
+		"000005_add_binding_id_to_credentials_and_profiles.up.sql",
+		"000006_binding_first_devices_profiles_and_grant_invalidations.up.sql",
+	)
+
+	err := execMigrationFile(stack.SQLDB, migrationPath(t, "000007_binding_first_runtime_artifacts_and_primary_profile.up.sql"))
+	if err == nil {
+		t.Fatal("expected runtime artifact migration to fail for duplicate default profiles")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "multiple default account_profiles rows") {
+		t.Fatalf("expected duplicate default profile precheck error, got: %v", err)
+	}
+}
+
+func TestRuntimeArtifactMigrationRejectsUnmappableArtifacts(t *testing.T) {
+	stack := newIntegrationStack(t)
+	t.Cleanup(stack.cleanup)
+	applyMigrations(t, stack.SQLDB,
+		"000001_create_credential_records.up.sql",
+		"000002_create_device_records.up.sql",
+		"000003_create_account_profiles.up.sql",
+		"000004_create_runtime_artifacts.up.sql",
+	)
+
+	insertLegacyCredential(t, stack.SQLDB, "binding_42_10001", "10001")
+	insertLegacyProfile(t, stack.SQLDB, "binding_42_10001", "1008611", true)
+	insertLegacyRuntimeArtifact(t, stack.SQLDB, "binding_99_missing", "authkey", "orphan-authkey", "1008611")
+	applyMigrations(t, stack.SQLDB,
+		"000005_add_binding_id_to_credentials_and_profiles.up.sql",
+		"000006_binding_first_devices_profiles_and_grant_invalidations.up.sql",
+	)
+
+	err := execMigrationFile(stack.SQLDB, migrationPath(t, "000007_binding_first_runtime_artifacts_and_primary_profile.up.sql"))
+	if err == nil {
+		t.Fatal("expected runtime artifact migration to fail for unmappable runtime artifacts")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "runtime_artifacts rows without credential binding_id mapping") {
+		t.Fatalf("expected unmappable runtime artifact precheck error, got: %v", err)
+	}
+}
+
+func TestRuntimeArtifactMigrationRejectsDuplicateBindingArtifacts(t *testing.T) {
+	stack := newIntegrationStack(t)
+	t.Cleanup(stack.cleanup)
+	applyMigrations(t, stack.SQLDB,
+		"000001_create_credential_records.up.sql",
+		"000002_create_device_records.up.sql",
+		"000003_create_account_profiles.up.sql",
+		"000004_create_runtime_artifacts.up.sql",
+	)
+
+	insertLegacyCredential(t, stack.SQLDB, "binding_42_10001", "10001")
+	insertLegacyProfile(t, stack.SQLDB, "binding_42_10001", "1008611", true)
+	applyMigrations(t, stack.SQLDB,
+		"000005_add_binding_id_to_credentials_and_profiles.up.sql",
+		"000006_binding_first_devices_profiles_and_grant_invalidations.up.sql",
+	)
+	allowDuplicateCredentialBindingIDs(t, stack.SQLDB)
+	insertCredentialWithBindingID(t, stack.SQLDB, 42, "binding_42_20002", "20002")
+	insertLegacyRuntimeArtifact(t, stack.SQLDB, "binding_42_10001", "authkey", "first-authkey", "1008611")
+	insertLegacyRuntimeArtifact(t, stack.SQLDB, "binding_42_20002", "authkey", "second-authkey", "1008611")
+
+	err := execMigrationFile(stack.SQLDB, migrationPath(t, "000007_binding_first_runtime_artifacts_and_primary_profile.up.sql"))
+	if err == nil {
+		t.Fatal("expected runtime artifact migration to fail for duplicate binding artifacts")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "duplicate runtime_artifacts rows for binding_id") {
+		t.Fatalf("expected duplicate binding runtime artifact precheck error, got: %v", err)
+	}
+}
+
+func TestRuntimeArtifactRollbackRejectsDuplicatePlatformArtifacts(t *testing.T) {
+	stack := newIntegrationStack(t)
+	t.Cleanup(stack.cleanup)
+	requireMigrationsApplied(t, stack.SQLDB)
+
+	insertRuntimeArtifactWithBindingID(t, stack.SQLDB, 42, "binding_42_10001", "authkey", "first-authkey", "1008611")
+	insertRuntimeArtifactWithBindingID(t, stack.SQLDB, 43, "binding_42_10001", "authkey", "second-authkey", "1008611")
+
+	err := execMigrationFile(stack.SQLDB, migrationPath(t, "000007_binding_first_runtime_artifacts_and_primary_profile.down.sql"))
+	if err == nil {
+		t.Fatal("expected runtime artifact rollback to fail for duplicate platform artifacts")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "runtime_artifacts rows would violate platform_account_id uniqueness") {
+		t.Fatalf("expected duplicate platform runtime artifact rollback precheck error, got: %v", err)
+	}
+}
+
 func requireMigrationsApplied(t *testing.T, db *sql.DB) {
 	t.Helper()
 
@@ -84,6 +186,80 @@ func applyMigrationFile(t *testing.T, db *sql.DB, path string) {
 	t.Helper()
 	if err := execMigrationFile(db, path); err != nil {
 		t.Fatalf("apply migration %q: %v", path, err)
+	}
+}
+
+func applyMigrations(t *testing.T, db *sql.DB, names ...string) {
+	t.Helper()
+	for _, name := range names {
+		applyMigrationFile(t, db, migrationPath(t, name))
+	}
+}
+
+func insertLegacyCredential(t *testing.T, db *sql.DB, platformAccountID string, accountID string) {
+	t.Helper()
+	_, err := db.Exec(`
+		INSERT INTO credential_records (
+			platform_account_id, platform, account_id, region, credential_blob, credential_version, status
+		) VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, platformAccountID, "mihomo", accountID, "cn_gf01", "{}", "v1", "active")
+	if err != nil {
+		t.Fatalf("insert legacy credential row: %v", err)
+	}
+}
+
+func insertLegacyProfile(t *testing.T, db *sql.DB, platformAccountID string, playerID string, isDefault bool) {
+	t.Helper()
+	_, err := db.Exec(`
+		INSERT INTO account_profiles (
+			platform_account_id, game_biz, region, player_id, nickname, level, is_default
+		) VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, platformAccountID, "hk4e_cn", "cn_gf01", playerID, "Traveler", 1, isDefault)
+	if err != nil {
+		t.Fatalf("insert legacy profile row: %v", err)
+	}
+}
+
+func insertLegacyRuntimeArtifact(t *testing.T, db *sql.DB, platformAccountID string, artifactType string, artifactValue string, scopeKey string) {
+	t.Helper()
+	_, err := db.Exec(`
+		INSERT INTO runtime_artifacts (
+			platform_account_id, artifact_type, artifact_value, scope_key, expires_at
+		) VALUES (?, ?, ?, ?, DATE_ADD(UTC_TIMESTAMP(3), INTERVAL 1 HOUR))
+	`, platformAccountID, artifactType, artifactValue, scopeKey)
+	if err != nil {
+		t.Fatalf("insert legacy runtime artifact row: %v", err)
+	}
+}
+
+func allowDuplicateCredentialBindingIDs(t *testing.T, db *sql.DB) {
+	t.Helper()
+	if _, err := db.Exec(`ALTER TABLE credential_records DROP INDEX uniq_credential_binding_id`); err != nil {
+		t.Fatalf("drop credential binding uniqueness: %v", err)
+	}
+}
+
+func insertCredentialWithBindingID(t *testing.T, db *sql.DB, bindingID uint64, platformAccountID string, accountID string) {
+	t.Helper()
+	_, err := db.Exec(`
+		INSERT INTO credential_records (
+			binding_id, platform_account_id, platform, account_id, region, credential_blob, credential_version, status
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, bindingID, platformAccountID, "mihomo", accountID, "cn_gf01", "{}", "v1", "active")
+	if err != nil {
+		t.Fatalf("insert credential row with binding_id: %v", err)
+	}
+}
+
+func insertRuntimeArtifactWithBindingID(t *testing.T, db *sql.DB, bindingID uint64, platformAccountID string, artifactType string, artifactValue string, scopeKey string) {
+	t.Helper()
+	_, err := db.Exec(`
+		INSERT INTO runtime_artifacts (
+			binding_id, platform_account_id, artifact_type, artifact_value, scope_key, expires_at
+		) VALUES (?, ?, ?, ?, ?, DATE_ADD(UTC_TIMESTAMP(3), INTERVAL 1 HOUR))
+	`, bindingID, platformAccountID, artifactType, artifactValue, scopeKey)
+	if err != nil {
+		t.Fatalf("insert runtime artifact row with binding_id: %v", err)
 	}
 }
 

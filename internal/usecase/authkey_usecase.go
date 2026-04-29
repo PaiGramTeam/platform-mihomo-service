@@ -51,7 +51,7 @@ func (uc *AuthkeyUsecase) GetAuthKey(ctx context.Context, platformAccountID stri
 		return nil, err
 	}
 
-	artifact, err := uc.artifactRepo.Get(ctx, platformAccountID, authKeyArtifactType, playerID)
+	artifact, err := uc.artifactRepo.GetByBindingID(ctx, credential.BindingID, authKeyArtifactType, playerID)
 	if err != nil {
 		return nil, err
 	}
@@ -66,6 +66,7 @@ func (uc *AuthkeyUsecase) GetAuthKey(ctx context.Context, platformAccountID stri
 
 	expiresAt := time.Now().UTC().Add(time.Duration(expiresInSeconds) * time.Second)
 	artifact = &biz.Artifact{
+		BindingID:         credential.BindingID,
 		PlatformAccountID: platformAccountID,
 		ArtifactType:      authKeyArtifactType,
 		ArtifactValue:     authKey,

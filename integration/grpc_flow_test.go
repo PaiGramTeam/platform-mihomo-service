@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"net"
+	"strconv"
 	"testing"
 	"time"
 
@@ -30,6 +31,7 @@ const (
 	integrationTicketIssuer   = "paigram-account-center"
 	integrationTicketAudience = "platform-mihomo-service"
 	bufConnAddress            = "bufnet"
+	testBindingID             = uint64(101)
 )
 
 var (
@@ -56,7 +58,7 @@ func TestBindThenGetAuthKeyFlow(t *testing.T) {
 	require.Equal(t, authResp.Authkey, artifact.ArtifactValue)
 	requireRuntimeArtifactCount(t, stack.SQLDB, bindResp.PlatformAccountId, 1)
 	if stack.Redis != nil {
-		requireRedisArtifactCached(t, stack, bindResp.PlatformAccountId, playerID, authResp.Authkey)
+		requireRedisArtifactCached(t, stack, testBindingID, bindResp.PlatformAccountId, playerID, authResp.Authkey)
 	}
 
 	secondAuthResp, err := client.GetAuthKey(testTicketForAccount(t, bindResp.PlatformAccountId, "mihomo.authkey.issue"), bindResp.PlatformAccountId, playerID)
@@ -79,7 +81,7 @@ func TestUpdateThenDeleteCredentialFlow(t *testing.T) {
 	require.NotEmpty(t, authResp.Authkey)
 	requireRuntimeArtifact(t, stack.SQLDB, bindResp.PlatformAccountId, playerID)
 	if stack.Redis != nil {
-		requireRedisArtifactCached(t, stack, bindResp.PlatformAccountId, playerID, authResp.Authkey)
+		requireRedisArtifactCached(t, stack, testBindingID, bindResp.PlatformAccountId, playerID, authResp.Authkey)
 	}
 
 	summaryResp, err := client.GetCredentialSummary(testTicketForAccount(t, bindResp.PlatformAccountId, "mihomo.credential.read_meta"), bindResp.PlatformAccountId)
@@ -103,6 +105,7 @@ func TestUpdateThenDeleteCredentialFlow(t *testing.T) {
 	require.NotNil(t, updateResp.Summary)
 	require.Len(t, updateResp.Summary.Devices, 2)
 	require.Equal(t, "87654321-4321-4321-4321-cba987654321", updateResp.Summary.Devices[1].DeviceId)
+	requireRuntimeArtifactCount(t, stack.SQLDB, bindResp.PlatformAccountId, 0)
 
 	deleteResp, err := client.DeleteCredential(testTicketForAccount(t, bindResp.PlatformAccountId, "mihomo.credential.delete"), bindResp.PlatformAccountId)
 	require.NoError(t, err)
@@ -113,7 +116,7 @@ func TestUpdateThenDeleteCredentialFlow(t *testing.T) {
 	require.Equal(t, codes.NotFound, status.Code(err))
 	requireRuntimeArtifactCount(t, stack.SQLDB, bindResp.PlatformAccountId, 0)
 	if stack.Redis != nil {
-		requireRedisArtifactMissing(t, stack, bindResp.PlatformAccountId, playerID)
+		requireRedisArtifactMissing(t, stack, testBindingID, bindResp.PlatformAccountId, playerID)
 	}
 }
 
@@ -136,7 +139,7 @@ func newMihomoClientForTest(t *testing.T, stack *integrationStack) *testMihomoCl
 	artifactRepo := data.NewArtifactRepo(db, stack.Redis, stack.RedisPrefix)
 	managementRepo := data.NewManagementRepo(db, stack.Redis, stack.RedisPrefix)
 	hoyoClient := platformmihomo.StubClient{}
-	bindUC := usecase.NewBindUsecase(credentialRepo, deviceRepo, profileRepo, hoyoClient, integrationEncryptionKey)
+	bindUC := usecase.NewBindUsecase(credentialRepo, deviceRepo, profileRepo, hoyoClient, integrationEncryptionKey, artifactRepo)
 	profileUC := usecase.NewProfileUsecase(profileRepo)
 
 	svc := service.NewMihomoAccountService(
@@ -234,6 +237,7 @@ func (c *testMihomoClient) DeleteCredential(serviceTicket string, platformAccoun
 }
 
 type runtimeArtifactRecord struct {
+	BindingID     uint64
 	ArtifactValue string
 	ScopeKey      string
 }
@@ -242,14 +246,14 @@ func requireRuntimeArtifact(t *testing.T, db *sql.DB, platformAccountID string, 
 	t.Helper()
 
 	const query = `
-		SELECT artifact_value, scope_key
+		SELECT binding_id, artifact_value, scope_key
 		FROM runtime_artifacts
 		WHERE platform_account_id = ? AND artifact_type = ? AND scope_key = ?
 		LIMIT 1
 	`
 
 	var record runtimeArtifactRecord
-	err := db.QueryRow(query, platformAccountID, "authkey", playerID).Scan(&record.ArtifactValue, &record.ScopeKey)
+	err := db.QueryRow(query, platformAccountID, "authkey", playerID).Scan(&record.BindingID, &record.ArtifactValue, &record.ScopeKey)
 	require.NoError(t, err)
 	return record
 }
@@ -263,30 +267,40 @@ func requireRuntimeArtifactCount(t *testing.T, db *sql.DB, platformAccountID str
 	require.Equal(t, want, count)
 }
 
-func requireRedisArtifactCached(t *testing.T, stack *integrationStack, platformAccountID string, playerID string, expectedAuthKey string) {
+func requireRedisArtifactCached(t *testing.T, stack *integrationStack, bindingID uint64, platformAccountID string, playerID string, expectedAuthKey string) {
 	t.Helper()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	payload, err := stack.Redis.Get(ctx, redisArtifactKey(stack, platformAccountID, playerID)).Result()
+	payload, err := stack.Redis.Get(ctx, redisArtifactBindingKey(stack, bindingID, playerID)).Result()
 	require.NoError(t, err)
 	require.Contains(t, payload, expectedAuthKey)
+	count, err := stack.Redis.Exists(ctx, redisArtifactKey(stack, platformAccountID, playerID)).Result()
+	require.NoError(t, err)
+	require.Zero(t, count)
 }
 
-func requireRedisArtifactMissing(t *testing.T, stack *integrationStack, platformAccountID string, playerID string) {
+func requireRedisArtifactMissing(t *testing.T, stack *integrationStack, bindingID uint64, platformAccountID string, playerID string) {
 	t.Helper()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	count, err := stack.Redis.Exists(ctx, redisArtifactKey(stack, platformAccountID, playerID)).Result()
+	count, err := stack.Redis.Exists(ctx,
+		redisArtifactBindingKey(stack, bindingID, playerID),
+		redisArtifactKey(stack, platformAccountID, playerID),
+	).Result()
 	require.NoError(t, err)
 	require.Zero(t, count)
 }
 
 func redisArtifactKey(stack *integrationStack, platformAccountID string, playerID string) string {
 	return stack.RedisPrefix + "artifact:" + platformAccountID + ":authkey:" + playerID
+}
+
+func redisArtifactBindingKey(stack *integrationStack, bindingID uint64, playerID string) string {
+	return stack.RedisPrefix + "artifact:binding:" + strconv.FormatUint(bindingID, 10) + ":authkey:" + playerID
 }
 
 func testTicket(t *testing.T) string { return testTicketForAccount(t, "", "mihomo.credential.bind") }
@@ -300,12 +314,12 @@ func testTicketForAccount(t *testing.T, platformAccountID string, scopes ...stri
 		"actor_type":              "bot",
 		"actor_id":                "bot-paigram",
 		"owner_user_id":           float64(1),
-		"binding_id":              float64(101),
+		"binding_id":              float64(testBindingID),
 		"bot_id":                  "bot-paigram",
 		"platform":                "mihomo",
 		"user_id":                 float64(1),
 		"platform_service_key":    integrationTicketAudience,
-		"platform_account_ref_id": float64(101),
+		"platform_account_ref_id": float64(testBindingID),
 		"exp":                     time.Now().Add(time.Minute).Unix(),
 	}
 	if platformAccountID != "" {
