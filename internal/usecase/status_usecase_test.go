@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"testing"
 	"time"
@@ -16,9 +17,13 @@ import (
 	platformmihomo "platform-mihomo-service/internal/platform/mihomo"
 )
 
+const statusUsecaseTicketKeyID = "status-usecase-test-key"
+
+var statusUsecaseTicketPrivateKey = ed25519.NewKeyFromSeed([]byte("0123456789abcdef0123456789abcdef"))
+
 func TestVerifyServiceTicketAcceptsExpectedClaims(t *testing.T) {
-	verifier := data.NewTicketVerifier("paigram-account-center", []byte("0123456789abcdef0123456789abcdef"))
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+	verifier := data.NewStaticKeyTicketVerifier("paigram-account-center", statusUsecaseTicketKeyID, statusUsecaseTicketPrivateKey.Public().(ed25519.PublicKey))
+	signed := signedStatusUsecaseTicket(t, jwt.MapClaims{
 		"iss":                  "paigram-account-center",
 		"aud":                  []string{"platform-mihomo-service"},
 		"actor_type":           "bot",
@@ -32,9 +37,6 @@ func TestVerifyServiceTicketAcceptsExpectedClaims(t *testing.T) {
 		"scopes":               []string{"mihomo.status.read"},
 		"exp":                  time.Now().Add(time.Minute).Unix(),
 	})
-
-	signed, err := token.SignedString([]byte("0123456789abcdef0123456789abcdef"))
-	require.NoError(t, err)
 
 	claims, err := verifier.Verify(signed, "platform-mihomo-service")
 	require.NoError(t, err)
@@ -50,18 +52,26 @@ func TestVerifyServiceTicketAcceptsExpectedClaims(t *testing.T) {
 }
 
 func TestVerifyServiceTicketRejectsMissingRequiredClaims(t *testing.T) {
-	verifier := data.NewTicketVerifier("paigram-account-center", []byte("0123456789abcdef0123456789abcdef"))
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+	verifier := data.NewStaticKeyTicketVerifier("paigram-account-center", statusUsecaseTicketKeyID, statusUsecaseTicketPrivateKey.Public().(ed25519.PublicKey))
+	signed := signedStatusUsecaseTicket(t, jwt.MapClaims{
 		"iss": "paigram-account-center",
 		"aud": []string{"platform-mihomo-service"},
 		"exp": time.Now().Add(time.Minute).Unix(),
 	})
 
-	signed, err := token.SignedString([]byte("0123456789abcdef0123456789abcdef"))
-	require.NoError(t, err)
-
-	_, err = verifier.Verify(signed, "platform-mihomo-service")
+	_, err := verifier.Verify(signed, "platform-mihomo-service")
 	require.Error(t, err)
+}
+
+func signedStatusUsecaseTicket(t *testing.T, claims jwt.MapClaims) string {
+	t.Helper()
+
+	token := jwt.NewWithClaims(jwt.SigningMethodEdDSA, claims)
+	token.Header["kid"] = statusUsecaseTicketKeyID
+	token.Header["typ"] = "service_ticket"
+	signed, err := token.SignedString(statusUsecaseTicketPrivateKey)
+	require.NoError(t, err)
+	return signed
 }
 
 func TestRefreshCredentialDoesNotMarkRefreshedOnValidationFailure(t *testing.T) {

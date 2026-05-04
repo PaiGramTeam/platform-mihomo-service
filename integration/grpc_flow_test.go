@@ -4,6 +4,7 @@ package integration
 
 import (
 	"context"
+	"crypto/ed25519"
 	"database/sql"
 	"net"
 	"strconv"
@@ -30,13 +31,14 @@ import (
 const (
 	integrationTicketIssuer   = "paigram-account-center"
 	integrationTicketAudience = "platform-mihomo-service"
+	integrationTicketKeyID    = "integration-service-ticket-key"
 	bufConnAddress            = "bufnet"
 	testBindingID             = uint64(101)
 )
 
 var (
-	integrationEncryptionKey = []byte("0123456789abcdef0123456789abcdef")
-	integrationSigningKey    = []byte("abcdef0123456789abcdef0123456789")
+	integrationEncryptionKey    = []byte("0123456789abcdef0123456789abcdef")
+	integrationTicketPrivateKey = ed25519.NewKeyFromSeed([]byte("abcdef0123456789abcdef0123456789"))
 )
 
 func TestBindThenGetAuthKeyFlow(t *testing.T) {
@@ -143,7 +145,7 @@ func newMihomoClientForTest(t *testing.T, stack *integrationStack) *testMihomoCl
 	profileUC := usecase.NewProfileUsecase(profileRepo)
 
 	svc := service.NewMihomoAccountService(
-		data.NewTicketVerifier(integrationTicketIssuer, integrationSigningKey),
+		data.NewStaticKeyTicketVerifier(integrationTicketIssuer, integrationTicketKeyID, integrationTicketPrivateKey.Public().(ed25519.PublicKey)),
 		bindUC,
 		usecase.NewStatusUsecase(credentialRepo, hoyoClient, integrationEncryptionKey),
 		profileUC,
@@ -328,9 +330,11 @@ func testTicketForAccount(t *testing.T, platformAccountID string, scopes ...stri
 	if len(scopes) > 0 {
 		claims["scopes"] = scopes
 	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	token := jwt.NewWithClaims(jwt.SigningMethodEdDSA, claims)
+	token.Header["kid"] = integrationTicketKeyID
+	token.Header["typ"] = "service_ticket"
 
-	signed, err := token.SignedString(integrationSigningKey)
+	signed, err := token.SignedString(integrationTicketPrivateKey)
 	require.NoError(t, err)
 
 	return signed

@@ -41,4 +41,6 @@ message Security {
   string credential_encryption_key = 1;
   string service_ticket_signing_key = 2;
   string service_ticket_issuer = 3;
+  string service_ticket_public_key_pem = 4;
+  string service_ticket_key_id = 5;
 }

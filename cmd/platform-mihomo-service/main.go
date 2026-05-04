@@ -59,7 +59,11 @@ func main() {
 	managementRepo := data.NewManagementRepo(database, redisClient, bc.GetData().GetRedis().GetPrefix())
 	grantInvalidationRepo := data.NewGrantInvalidationRepo(database)
 	client := platformmihomo.UnconfiguredClient{}
-	ticketVerifier := data.NewTicketVerifier(bc.GetSecurity().GetServiceTicketIssuer(), []byte(bc.GetSecurity().GetServiceTicketSigningKey())).WithGrantVersionLookup(grantInvalidationRepo)
+	ticketVerifier, err := newTicketVerifierFromSecurity(bc.GetSecurity())
+	if err != nil {
+		log.Fatal(err)
+	}
+	ticketVerifier.WithGrantVersionLookup(grantInvalidationRepo)
 
 	bindUC := usecase.NewBindUsecase(credentialRepo, deviceRepo, profileRepo, client, []byte(bc.GetSecurity().GetCredentialEncryptionKey()), artifactRepo)
 	statusUC := usecase.NewStatusUsecase(credentialRepo, client, []byte(bc.GetSecurity().GetCredentialEncryptionKey()))
@@ -107,9 +111,23 @@ func validateBootstrap(bc *conf.Bootstrap) error {
 	if len(security.GetCredentialEncryptionKey()) != 32 {
 		return errors.New("security.credential_encryption_key must be 32 bytes")
 	}
-	if len(security.GetServiceTicketSigningKey()) != 32 {
-		return errors.New("security.service_ticket_signing_key must be 32 bytes")
+	if security.GetServiceTicketKeyId() == "" {
+		return errors.New("security.service_ticket_key_id is required")
+	}
+	if security.GetServiceTicketPublicKeyPem() == "" {
+		return errors.New("security.service_ticket_public_key_pem is required")
+	}
+	if _, err := data.ParseEd25519PublicKeyPEM(security.GetServiceTicketPublicKeyPem()); err != nil {
+		return err
 	}
 
 	return nil
+}
+
+func newTicketVerifierFromSecurity(security *conf.Security) (*data.TicketVerifier, error) {
+	publicKey, err := data.ParseEd25519PublicKeyPEM(security.GetServiceTicketPublicKeyPem())
+	if err != nil {
+		return nil, err
+	}
+	return data.NewStaticKeyTicketVerifier(security.GetServiceTicketIssuer(), security.GetServiceTicketKeyId(), publicKey), nil
 }

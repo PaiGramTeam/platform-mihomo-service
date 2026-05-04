@@ -8,8 +8,9 @@ import (
 	mihomov1 "github.com/PaiGramTeam/proto-contracts/mihomo/v1"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
-	"platform-mihomo-service/internal/data"
 	platformmihomo "platform-mihomo-service/internal/platform/mihomo"
 	"platform-mihomo-service/internal/usecase"
 )
@@ -39,6 +40,17 @@ func TestMihomoCredentialServiceGetCredentialSummary(t *testing.T) {
 	require.Equal(t, bindResp.PlatformAccountID, resp.PlatformAccountId)
 	require.NotEmpty(t, resp.Profiles)
 	require.NotEmpty(t, resp.Devices)
+}
+
+func TestMihomoCredentialServiceGetCredentialSummaryRejectsMachineAccessToken(t *testing.T) {
+	harness := newMihomoCredentialServiceForTest(t)
+
+	_, err := harness.service.GetCredentialSummary(context.Background(), &mihomov1.GetCredentialSummaryRequest{
+		ServiceTicket:     signedMihomoMachineAccessToken(t, "binding_101_10001", "mihomo.credential.read_meta"),
+		PlatformAccountId: "binding_101_10001",
+	})
+
+	require.Equal(t, codes.Unauthenticated, status.Code(err))
 }
 
 func TestMihomoCredentialServiceRejectsTicketMissingPlatformAccountID(t *testing.T) {
@@ -109,8 +121,34 @@ func signedMihomoSummaryTicketWithoutAccount(t *testing.T) string {
 		"scopes":               []string{"mihomo.credential.read_meta"},
 		"exp":                  time.Now().Add(time.Minute).Unix(),
 	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	signed, err := token.SignedString(serviceTestSigningKey)
+	return signedServiceTestJWT(t, claims)
+}
+
+func signedMihomoMachineAccessToken(t *testing.T, platformAccountID string, scopes ...string) string {
+	t.Helper()
+
+	claims := jwt.MapClaims{
+		"iss":                  serviceTestIssuer,
+		"aud":                  []string{serviceTestAudience},
+		"actor_type":           "machine",
+		"actor_id":             "machine-paigram",
+		"owner_user_id":        float64(1),
+		"binding_id":           float64(101),
+		"platform":             "mihomo",
+		"platform_service_key": serviceTestAudience,
+		"exp":                  time.Now().Add(time.Minute).Unix(),
+	}
+	if platformAccountID != "" {
+		claims["platform_account_id"] = platformAccountID
+	}
+	if len(scopes) > 0 {
+		claims["scopes"] = scopes
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodEdDSA, claims)
+	token.Header["kid"] = serviceTestKeyID
+	token.Header["typ"] = "machine_access"
+	signed, err := token.SignedString(serviceTestTicketPrivateKey)
 	require.NoError(t, err)
 	return signed
 }
@@ -138,7 +176,7 @@ func newMihomoCredentialServiceForTest(t *testing.T) *mihomoCredentialServiceTes
 
 	return &mihomoCredentialServiceTestHarness{
 		service: NewMihomoCredentialService(
-			data.NewTicketVerifier(serviceTestIssuer, serviceTestSigningKey),
+			serviceTestTicketVerifier(),
 			managementUC,
 		),
 		bindUC: bindUC,
