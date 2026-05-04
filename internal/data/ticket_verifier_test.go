@@ -2,6 +2,7 @@ package data
 
 import (
 	"context"
+	"crypto/ed25519"
 	"testing"
 	"time"
 
@@ -12,12 +13,187 @@ import (
 const (
 	testTicketIssuer   = "paigram-account-center"
 	testTicketAudience = "platform-mihomo-service"
+	testTicketKeyID    = "service-ticket-test-key"
 )
 
-var testTicketSigningKey = []byte("0123456789abcdef0123456789abcdef")
+var testTicketPrivateKey = ed25519.NewKeyFromSeed([]byte("0123456789abcdef0123456789abcdef"))
+
+func TestVerifyServiceTicketAcceptsEd25519SignedTicketWithKID(t *testing.T) {
+	verifier := testTicketVerifier()
+	raw := issueTestTicket(t, map[string]any{
+		"actor_type":          "consumer",
+		"actor_id":            "user-1",
+		"owner_user_id":       float64(1),
+		"binding_id":          float64(101),
+		"platform":            "mihomo",
+		"platform_account_id": "binding_101_10001",
+		"consumer":            "paigram",
+		"grant_version":       float64(2),
+		"scopes":              []string{"mihomo.profile.read"},
+	})
+
+	claims, err := verifier.Verify(raw, testTicketAudience)
+	require.NoError(t, err)
+	require.Equal(t, "consumer", claims.ActorType)
+	require.Equal(t, uint64(101), claims.BindingID)
+	require.Equal(t, []string{"mihomo.profile.read"}, claims.Scopes)
+}
+
+func TestVerifyServiceTicketRejectsHS256Ticket(t *testing.T) {
+	verifier := testTicketVerifier()
+	raw := issueHS256TestTicket(t, map[string]any{
+		"actor_type":    "consumer",
+		"actor_id":      "user-1",
+		"owner_user_id": float64(1),
+		"binding_id":    float64(101),
+		"platform":      "mihomo",
+		"consumer":      "paigram",
+		"grant_version": float64(2),
+	})
+
+	_, err := verifier.Verify(raw, testTicketAudience)
+	require.ErrorContains(t, err, "unexpected signing method")
+}
+
+func TestVerifyServiceTicketRejectsMissingKID(t *testing.T) {
+	verifier := testTicketVerifier()
+	raw := issueTestTicketWithHeaders(t, map[string]any{
+		"actor_type":    "consumer",
+		"actor_id":      "user-1",
+		"owner_user_id": float64(1),
+		"binding_id":    float64(101),
+		"platform":      "mihomo",
+		"consumer":      "paigram",
+		"grant_version": float64(2),
+	}, map[string]any{"typ": "service_ticket"})
+
+	_, err := verifier.Verify(raw, testTicketAudience)
+	require.ErrorContains(t, err, "kid")
+}
+
+func TestVerifyServiceTicketRejectsWrongKID(t *testing.T) {
+	verifier := testTicketVerifier()
+	raw := issueTestTicketWithHeaders(t, map[string]any{
+		"actor_type":    "consumer",
+		"actor_id":      "user-1",
+		"owner_user_id": float64(1),
+		"binding_id":    float64(101),
+		"platform":      "mihomo",
+		"consumer":      "paigram",
+		"grant_version": float64(2),
+	}, map[string]any{"kid": "wrong-key", "typ": "service_ticket"})
+
+	_, err := verifier.Verify(raw, testTicketAudience)
+	require.ErrorContains(t, err, "public key")
+}
+
+func TestVerifyServiceTicketRejectsWrongType(t *testing.T) {
+	verifier := testTicketVerifier()
+	raw := issueTestTicketWithHeaders(t, map[string]any{
+		"actor_type":    "consumer",
+		"actor_id":      "user-1",
+		"owner_user_id": float64(1),
+		"binding_id":    float64(101),
+		"platform":      "mihomo",
+		"consumer":      "paigram",
+		"grant_version": float64(2),
+	}, map[string]any{"kid": testTicketKeyID, "typ": "access_token"})
+
+	_, err := verifier.Verify(raw, testTicketAudience)
+	require.ErrorContains(t, err, "service_ticket")
+}
+
+func TestVerifyServiceTicketRejectsMissingType(t *testing.T) {
+	verifier := testTicketVerifier()
+	raw := issueTestTicketWithHeaders(t, map[string]any{
+		"actor_type":    "consumer",
+		"actor_id":      "user-1",
+		"owner_user_id": float64(1),
+		"binding_id":    float64(101),
+		"platform":      "mihomo",
+		"consumer":      "paigram",
+		"grant_version": float64(2),
+	}, map[string]any{"kid": testTicketKeyID})
+
+	_, err := verifier.Verify(raw, testTicketAudience)
+	require.ErrorContains(t, err, "service_ticket")
+}
+
+func TestVerifyServiceTicketRejectsMissingTypeHeaderWithPayloadType(t *testing.T) {
+	verifier := testTicketVerifier()
+	raw := issueTestTicketWithHeaders(t, map[string]any{
+		"typ":           "service_ticket",
+		"actor_type":    "consumer",
+		"actor_id":      "user-1",
+		"owner_user_id": float64(1),
+		"binding_id":    float64(101),
+		"platform":      "mihomo",
+		"consumer":      "paigram",
+		"grant_version": float64(2),
+	}, map[string]any{"kid": testTicketKeyID})
+
+	_, err := verifier.Verify(raw, testTicketAudience)
+	require.ErrorContains(t, err, "service_ticket")
+}
+
+func TestVerifyServiceTicketRejectsMissingExpiration(t *testing.T) {
+	verifier := testTicketVerifier()
+	raw := issueTestTicketWithClaimsAndHeaders(t, map[string]any{
+		"iss":           testTicketIssuer,
+		"aud":           []string{testTicketAudience},
+		"actor_type":    "consumer",
+		"actor_id":      "user-1",
+		"owner_user_id": float64(1),
+		"binding_id":    float64(101),
+		"platform":      "mihomo",
+		"consumer":      "paigram",
+		"grant_version": float64(2),
+	}, map[string]any{"kid": testTicketKeyID, "typ": "service_ticket"})
+
+	_, err := verifier.Verify(raw, testTicketAudience)
+	require.ErrorContains(t, err, "exp")
+}
+
+func TestVerifyServiceTicketRejectsWrongIssuer(t *testing.T) {
+	verifier := testTicketVerifier()
+	raw := issueTestTicketWithClaimsAndHeaders(t, map[string]any{
+		"iss":           "wrong-issuer",
+		"aud":           []string{testTicketAudience},
+		"exp":           time.Now().Add(time.Minute).Unix(),
+		"actor_type":    "consumer",
+		"actor_id":      "user-1",
+		"owner_user_id": float64(1),
+		"binding_id":    float64(101),
+		"platform":      "mihomo",
+		"consumer":      "paigram",
+		"grant_version": float64(2),
+	}, map[string]any{"kid": testTicketKeyID, "typ": "service_ticket"})
+
+	_, err := verifier.Verify(raw, testTicketAudience)
+	require.ErrorContains(t, err, "issuer")
+}
+
+func TestVerifyServiceTicketRejectsWrongAudience(t *testing.T) {
+	verifier := testTicketVerifier()
+	raw := issueTestTicketWithClaimsAndHeaders(t, map[string]any{
+		"iss":           testTicketIssuer,
+		"aud":           []string{"wrong-audience"},
+		"exp":           time.Now().Add(time.Minute).Unix(),
+		"actor_type":    "consumer",
+		"actor_id":      "user-1",
+		"owner_user_id": float64(1),
+		"binding_id":    float64(101),
+		"platform":      "mihomo",
+		"consumer":      "paigram",
+		"grant_version": float64(2),
+	}, map[string]any{"kid": testTicketKeyID, "typ": "service_ticket"})
+
+	_, err := verifier.Verify(raw, testTicketAudience)
+	require.ErrorContains(t, err, "audience")
+}
 
 func TestVerifyAcceptsBindingAwareClaims(t *testing.T) {
-	verifier := NewTicketVerifier(testTicketIssuer, testTicketSigningKey)
+	verifier := testTicketVerifier()
 	raw := issueTestTicket(t, map[string]any{
 		"actor_type":          "consumer",
 		"actor_id":            "user-1",
@@ -48,7 +224,7 @@ func TestVerifyAcceptsBindingAwareClaims(t *testing.T) {
 }
 
 func TestVerifyNormalizesAllowedActionsClaim(t *testing.T) {
-	verifier := NewTicketVerifier(testTicketIssuer, testTicketSigningKey)
+	verifier := testTicketVerifier()
 	raw := issueTestTicket(t, map[string]any{
 		"actor_type":          "consumer",
 		"actor_id":            "user-1",
@@ -67,7 +243,7 @@ func TestVerifyNormalizesAllowedActionsClaim(t *testing.T) {
 }
 
 func TestVerifyPrefersAllowedActionsOverScopes(t *testing.T) {
-	verifier := NewTicketVerifier(testTicketIssuer, testTicketSigningKey)
+	verifier := testTicketVerifier()
 	raw := issueTestTicket(t, map[string]any{
 		"actor_type":          "consumer",
 		"actor_id":            "user-1",
@@ -87,7 +263,7 @@ func TestVerifyPrefersAllowedActionsOverScopes(t *testing.T) {
 }
 
 func TestVerifyRejectsMissingBindingID(t *testing.T) {
-	verifier := NewTicketVerifier(testTicketIssuer, testTicketSigningKey)
+	verifier := testTicketVerifier()
 	raw := issueTestTicket(t, map[string]any{
 		"actor_type":    "consumer",
 		"actor_id":      "user-1",
@@ -103,7 +279,7 @@ func TestVerifyRejectsMissingBindingID(t *testing.T) {
 }
 
 func TestVerifyRejectsConsumerActorWithoutConsumerClaim(t *testing.T) {
-	verifier := NewTicketVerifier(testTicketIssuer, testTicketSigningKey)
+	verifier := testTicketVerifier()
 	raw := issueTestTicket(t, map[string]any{
 		"actor_type":    "consumer",
 		"actor_id":      "user-1",
@@ -119,7 +295,7 @@ func TestVerifyRejectsConsumerActorWithoutConsumerClaim(t *testing.T) {
 }
 
 func TestVerifyRejectsConsumerActorWithoutGrantVersionClaim(t *testing.T) {
-	verifier := NewTicketVerifier(testTicketIssuer, testTicketSigningKey)
+	verifier := testTicketVerifier()
 	raw := issueTestTicket(t, map[string]any{
 		"actor_type":    "consumer",
 		"actor_id":      "user-1",
@@ -137,7 +313,7 @@ func TestVerifyRejectsConsumerActorWithoutGrantVersionClaim(t *testing.T) {
 func TestVerifyAllowsUserAndAdminActorsWithoutGrantVersionClaim(t *testing.T) {
 	for _, actorType := range []string{"user", "admin"} {
 		t.Run(actorType, func(t *testing.T) {
-			verifier := NewTicketVerifier(testTicketIssuer, testTicketSigningKey)
+			verifier := testTicketVerifier()
 			raw := issueTestTicket(t, map[string]any{
 				"actor_type":    actorType,
 				"actor_id":      actorType + "-1",
@@ -156,7 +332,7 @@ func TestVerifyAllowsUserAndAdminActorsWithoutGrantVersionClaim(t *testing.T) {
 
 func TestVerifyContextRejectsStaleConsumerGrantVersion(t *testing.T) {
 	lookup := &fakeGrantVersionLookup{minimum: 5}
-	verifier := NewTicketVerifier(testTicketIssuer, testTicketSigningKey).WithGrantVersionLookup(lookup)
+	verifier := testTicketVerifier().WithGrantVersionLookup(lookup)
 	raw := issueTestTicket(t, map[string]any{
 		"actor_type":    "consumer",
 		"actor_id":      "user-1",
@@ -175,7 +351,7 @@ func TestVerifyContextRejectsStaleConsumerGrantVersion(t *testing.T) {
 }
 
 func TestVerifyAllowsNonConsumerActorTypesWithoutConsumerClaim(t *testing.T) {
-	verifier := NewTicketVerifier(testTicketIssuer, testTicketSigningKey)
+	verifier := testTicketVerifier()
 	raw := issueTestTicket(t, map[string]any{
 		"actor_type":    "robot",
 		"actor_id":      "user-1",
@@ -191,7 +367,7 @@ func TestVerifyAllowsNonConsumerActorTypesWithoutConsumerClaim(t *testing.T) {
 }
 
 func TestVerifyRejectsMismatchedLegacyPlatformAccountRefID(t *testing.T) {
-	verifier := NewTicketVerifier(testTicketIssuer, testTicketSigningKey)
+	verifier := testTicketVerifier()
 	raw := issueTestTicket(t, map[string]any{
 		"actor_type":              "consumer",
 		"actor_id":                "user-1",
@@ -219,7 +395,44 @@ func (f *fakeGrantVersionLookup) MinimumVersion(_ context.Context, bindingID uin
 	return f.minimum, nil
 }
 
+func testTicketVerifier() *TicketVerifier {
+	return NewStaticKeyTicketVerifier(testTicketIssuer, testTicketKeyID, testTicketPrivateKey.Public().(ed25519.PublicKey))
+}
+
 func issueTestTicket(t *testing.T, claims map[string]any) string {
+	t.Helper()
+
+	return issueTestTicketWithHeaders(t, claims, map[string]any{"kid": testTicketKeyID, "typ": "service_ticket"})
+}
+
+func issueTestTicketWithHeaders(t *testing.T, claims map[string]any, headers map[string]any) string {
+	t.Helper()
+
+	baseClaims := jwt.MapClaims{
+		"iss": testTicketIssuer,
+		"aud": []string{testTicketAudience},
+		"exp": time.Now().Add(time.Minute).Unix(),
+	}
+	for key, value := range claims {
+		baseClaims[key] = value
+	}
+	return issueTestTicketWithClaimsAndHeaders(t, baseClaims, headers)
+}
+
+func issueTestTicketWithClaimsAndHeaders(t *testing.T, claims map[string]any, headers map[string]any) string {
+	t.Helper()
+
+	token := jwt.NewWithClaims(jwt.SigningMethodEdDSA, jwt.MapClaims(claims))
+	for key, value := range headers {
+		token.Header[key] = value
+	}
+	signed, err := token.SignedString(testTicketPrivateKey)
+	require.NoError(t, err)
+
+	return signed
+}
+
+func issueHS256TestTicket(t *testing.T, claims map[string]any) string {
 	t.Helper()
 
 	baseClaims := jwt.MapClaims{
@@ -232,7 +445,9 @@ func issueTestTicket(t *testing.T, claims map[string]any) string {
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, baseClaims)
-	signed, err := token.SignedString(testTicketSigningKey)
+	token.Header["kid"] = testTicketKeyID
+	token.Header["typ"] = "service_ticket"
+	signed, err := token.SignedString([]byte("0123456789abcdef0123456789abcdef"))
 	require.NoError(t, err)
 
 	return signed

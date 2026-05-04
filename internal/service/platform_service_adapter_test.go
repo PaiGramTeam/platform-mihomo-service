@@ -15,7 +15,6 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 
-	"platform-mihomo-service/internal/data"
 	platformmihomo "platform-mihomo-service/internal/platform/mihomo"
 	"platform-mihomo-service/internal/usecase"
 )
@@ -169,7 +168,7 @@ func newGenericPlatformServiceForAdapterTest(store *memoryGrantInvalidationStore
 		bindUC,
 		profileUC,
 	)
-	ticketVerifier := data.NewTicketVerifier(serviceTestIssuer, serviceTestSigningKey).WithGrantVersionLookup(store)
+	ticketVerifier := serviceTestTicketVerifier().WithGrantVersionLookup(store)
 	return NewGenericPlatformService(ticketVerifier, bindUC, usecase.NewStatusUsecase(credentialRepo, client, serviceTestSigningKey), managementUC, store)
 }
 
@@ -221,8 +220,42 @@ func signedAdapterServiceTicket(t *testing.T, opts adapterTicketOptions) string 
 		claims["scopes"] = opts.Scopes
 	}
 
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	signed, err := token.SignedString(serviceTestSigningKey)
+	return signedServiceTestJWT(t, claims)
+}
+
+func signedAdapterMachineAccessToken(t *testing.T, opts adapterTicketOptions) string {
+	t.Helper()
+
+	actorType := opts.ActorType
+	if actorType == "" {
+		actorType = "machine"
+	}
+	platform := opts.Platform
+	if platform == "" {
+		platform = "mihomo"
+	}
+	claims := jwt.MapClaims{
+		"iss":                  serviceTestIssuer,
+		"aud":                  []string{serviceTestAudience},
+		"actor_type":           actorType,
+		"actor_id":             actorType + "-paigram",
+		"owner_user_id":        float64(1),
+		"binding_id":           float64(101),
+		"platform":             platform,
+		"platform_service_key": serviceTestAudience,
+		"exp":                  time.Now().Add(time.Minute).Unix(),
+	}
+	if opts.PlatformAccountID != "" {
+		claims["platform_account_id"] = opts.PlatformAccountID
+	}
+	if len(opts.Scopes) > 0 {
+		claims["scopes"] = opts.Scopes
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodEdDSA, claims)
+	token.Header["kid"] = serviceTestKeyID
+	token.Header["typ"] = "machine_access"
+	signed, err := token.SignedString(serviceTestTicketPrivateKey)
 	require.NoError(t, err)
 	return signed
 }
@@ -246,7 +279,7 @@ func TestGenericPlatformServiceGetCredentialSummary(t *testing.T) {
 		profileUC,
 	)
 	adapter := NewGenericPlatformService(
-		data.NewTicketVerifier(serviceTestIssuer, serviceTestSigningKey),
+		serviceTestTicketVerifier(),
 		bindUC,
 		usecase.NewStatusUsecase(credentialRepo, client, serviceTestSigningKey),
 		managementUC,
@@ -272,6 +305,28 @@ func TestGenericPlatformServiceGetCredentialSummary(t *testing.T) {
 	require.NotEmpty(t, resp.Devices)
 }
 
+func TestGenericPlatformServiceGetCredentialSummaryRejectsMachineAccessToken(t *testing.T) {
+	adapter := newGenericPlatformServiceForAdapterTest(newMemoryGrantInvalidationStore())
+
+	_, err := adapter.GetCredentialSummary(context.Background(), &platformv1.GetCredentialSummaryRequest{
+		ServiceTicket:     signedAdapterMachineAccessToken(t, adapterTicketOptions{PlatformAccountID: "binding_101_10001", Scopes: []string{"mihomo.credential.read_meta"}}),
+		PlatformAccountId: "binding_101_10001",
+	})
+
+	require.Equal(t, codes.Unauthenticated, status.Code(err))
+}
+
+func TestGenericPlatformServicePutCredentialRejectsMachineAccessToken(t *testing.T) {
+	adapter := newGenericPlatformServiceForAdapterTest(newMemoryGrantInvalidationStore())
+
+	_, err := adapter.PutCredential(context.Background(), &platformv1.PutCredentialRequest{
+		ServiceTicket:         signedAdapterMachineAccessToken(t, adapterTicketOptions{Scopes: []string{"mihomo.credential.bind"}}),
+		CredentialPayloadJson: `{"cookie_bundle":"{\"account_id\":\"10001\",\"cookie_token\":\"abc\"}","device_id":"12345678-1234-1234-1234-123456789abc","device_fp":"abcdefghijklmn","device_name":"iPhone","region_hint":"cn_gf01"}`,
+	})
+
+	require.Equal(t, codes.Unauthenticated, status.Code(err))
+}
+
 func TestGenericPlatformServiceRejectsMissingSummaryScope(t *testing.T) {
 	credentialRepo := newMemoryCredentialRepo()
 	deviceRepo := newMemoryDeviceRepo()
@@ -291,7 +346,7 @@ func TestGenericPlatformServiceRejectsMissingSummaryScope(t *testing.T) {
 		profileUC,
 	)
 	adapter := NewGenericPlatformService(
-		data.NewTicketVerifier(serviceTestIssuer, serviceTestSigningKey),
+		serviceTestTicketVerifier(),
 		bindUC,
 		usecase.NewStatusUsecase(credentialRepo, client, serviceTestSigningKey),
 		managementUC,
@@ -333,7 +388,7 @@ func TestGenericPlatformServiceRejectsProfileScopedSummaryTicket(t *testing.T) {
 		profileUC,
 	)
 	adapter := NewGenericPlatformService(
-		data.NewTicketVerifier(serviceTestIssuer, serviceTestSigningKey),
+		serviceTestTicketVerifier(),
 		bindUC,
 		usecase.NewStatusUsecase(credentialRepo, client, serviceTestSigningKey),
 		managementUC,
@@ -360,7 +415,7 @@ func TestGenericPlatformServiceDescribePlatform(t *testing.T) {
 	bindUC := usecase.NewBindUsecase(newMemoryCredentialRepo(), newMemoryDeviceRepo(), newMemoryProfileRepo(), platformmihomo.StubClient{}, serviceTestSigningKey, newMemoryArtifactRepo())
 	statusUC := usecase.NewStatusUsecase(newMemoryCredentialRepo(), platformmihomo.StubClient{}, serviceTestSigningKey)
 	adapter := NewGenericPlatformService(
-		data.NewTicketVerifier(serviceTestIssuer, serviceTestSigningKey),
+		serviceTestTicketVerifier(),
 		bindUC,
 		statusUC,
 		usecase.NewManagementUsecase(newMemoryCredentialRepo(), newMemoryDeviceRepo(), newMemoryProfileRepo(), newMemoryArtifactRepo(), newMemoryManagementRepo(newMemoryCredentialRepo(), newMemoryDeviceRepo(), newMemoryProfileRepo(), newMemoryArtifactRepo()), bindUC, usecase.NewProfileUsecase(newMemoryProfileRepo())),
@@ -381,7 +436,7 @@ func TestGenericPlatformServiceRegisteredOnGRPCServer(t *testing.T) {
 	bindUC := usecase.NewBindUsecase(newMemoryCredentialRepo(), newMemoryDeviceRepo(), newMemoryProfileRepo(), platformmihomo.StubClient{}, serviceTestSigningKey, newMemoryArtifactRepo())
 	statusUC := usecase.NewStatusUsecase(newMemoryCredentialRepo(), platformmihomo.StubClient{}, serviceTestSigningKey)
 	adapter := NewGenericPlatformService(
-		data.NewTicketVerifier(serviceTestIssuer, serviceTestSigningKey),
+		serviceTestTicketVerifier(),
 		bindUC,
 		statusUC,
 		usecase.NewManagementUsecase(newMemoryCredentialRepo(), newMemoryDeviceRepo(), newMemoryProfileRepo(), newMemoryArtifactRepo(), newMemoryManagementRepo(newMemoryCredentialRepo(), newMemoryDeviceRepo(), newMemoryProfileRepo(), newMemoryArtifactRepo()), bindUC, usecase.NewProfileUsecase(newMemoryProfileRepo())),
@@ -424,7 +479,7 @@ func TestGenericPlatformServicePutCredentialBindsWhenPlatformAccountIDUnknown(t 
 		profileUC,
 	)
 	adapter := NewGenericPlatformService(
-		data.NewTicketVerifier(serviceTestIssuer, serviceTestSigningKey),
+		serviceTestTicketVerifier(),
 		bindUC,
 		usecase.NewStatusUsecase(credentialRepo, client, serviceTestSigningKey),
 		managementUC,
@@ -459,7 +514,7 @@ func TestGenericPlatformServicePutCredentialRejectsCreateWithUpdateOnlyScope(t *
 		profileUC,
 	)
 	adapter := NewGenericPlatformService(
-		data.NewTicketVerifier(serviceTestIssuer, serviceTestSigningKey),
+		serviceTestTicketVerifier(),
 		bindUC,
 		usecase.NewStatusUsecase(credentialRepo, client, serviceTestSigningKey),
 		managementUC,
@@ -492,7 +547,7 @@ func TestGenericPlatformServicePutCredentialRejectsUpdateWithBindOnlyScope(t *te
 		profileUC,
 	)
 	adapter := NewGenericPlatformService(
-		data.NewTicketVerifier(serviceTestIssuer, serviceTestSigningKey),
+		serviceTestTicketVerifier(),
 		bindUC,
 		usecase.NewStatusUsecase(credentialRepo, client, serviceTestSigningKey),
 		managementUC,
@@ -535,7 +590,7 @@ func TestGenericPlatformServiceDeleteCredentialUsesDeleteScope(t *testing.T) {
 		profileUC,
 	)
 	adapter := NewGenericPlatformService(
-		data.NewTicketVerifier(serviceTestIssuer, serviceTestSigningKey),
+		serviceTestTicketVerifier(),
 		bindUC,
 		usecase.NewStatusUsecase(credentialRepo, client, serviceTestSigningKey),
 		managementUC,

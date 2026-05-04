@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"crypto/ed25519"
 	"strconv"
 	"testing"
 	"time"
@@ -481,11 +482,9 @@ func TestConfirmPrimaryProfileRejectsExpiredTicket(t *testing.T) {
 		"scopes":               []string{"mihomo.profile.write"},
 		"exp":                  time.Now().Add(-time.Minute).Unix(),
 	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	expiredTicket, err := token.SignedString(serviceTestSigningKey)
-	require.NoError(t, err)
+	expiredTicket := signedServiceTestJWT(t, claims)
 
-	_, err = svc.ConfirmPrimaryProfile(context.Background(), &v1.ConfirmPrimaryProfileRequest{
+	_, err := svc.ConfirmPrimaryProfile(context.Background(), &v1.ConfirmPrimaryProfileRequest{
 		ServiceTicket:     expiredTicket,
 		PlatformAccountId: bindResp.PlatformAccountId,
 		PlayerId:          bindResp.Profiles[0].PlayerId,
@@ -543,9 +542,13 @@ func TestBindCredentialRejectsInvalidServiceTicket(t *testing.T) {
 const (
 	serviceTestAudience = "platform-mihomo-service"
 	serviceTestIssuer   = "paigram-account-center"
+	serviceTestKeyID    = "service-test-key"
 )
 
-var serviceTestSigningKey = []byte("0123456789abcdef0123456789abcdef")
+var (
+	serviceTestSigningKey       = []byte("0123456789abcdef0123456789abcdef")
+	serviceTestTicketPrivateKey = ed25519.NewKeyFromSeed([]byte("0123456789abcdef0123456789abcdef"))
+)
 
 func signedServiceTicket(t *testing.T) string {
 	return signedServiceTicketForAccount(t, "", "mihomo.credential.bind")
@@ -572,12 +575,7 @@ func signedServiceTicketForAccount(t *testing.T, platformAccountID string, scope
 	if len(scopes) > 0 {
 		claims["scopes"] = scopes
 	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-
-	signed, err := token.SignedString(serviceTestSigningKey)
-	require.NoError(t, err)
-
-	return signed
+	return signedServiceTestJWT(t, claims)
 }
 
 func signedServiceTicketForProfile(t *testing.T, platformAccountID string, profileID uint64, scopes ...string) string {
@@ -601,10 +599,22 @@ func signedServiceTicketForProfile(t *testing.T, platformAccountID string, profi
 		claims["scopes"] = scopes
 	}
 
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	signed, err := token.SignedString(serviceTestSigningKey)
+	return signedServiceTestJWT(t, claims)
+}
+
+func signedServiceTestJWT(t *testing.T, claims jwt.MapClaims) string {
+	t.Helper()
+
+	token := jwt.NewWithClaims(jwt.SigningMethodEdDSA, claims)
+	token.Header["kid"] = serviceTestKeyID
+	token.Header["typ"] = "service_ticket"
+	signed, err := token.SignedString(serviceTestTicketPrivateKey)
 	require.NoError(t, err)
 	return signed
+}
+
+func serviceTestTicketVerifier() *data.TicketVerifier {
+	return data.NewStaticKeyTicketVerifier(serviceTestIssuer, serviceTestKeyID, serviceTestTicketPrivateKey.Public().(ed25519.PublicKey))
 }
 
 func bindCredentialForServiceTest(t *testing.T, svc *MihomoAccountService) *v1.BindCredentialResponse {
@@ -643,7 +653,7 @@ func newMihomoAccountServiceForTest(t *testing.T) *MihomoAccountService {
 	)
 
 	return NewMihomoAccountService(
-		data.NewTicketVerifier(serviceTestIssuer, serviceTestSigningKey),
+		serviceTestTicketVerifier(),
 		bindUC,
 		statusUC,
 		profileUC,

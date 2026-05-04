@@ -2,6 +2,7 @@ package data
 
 import (
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"fmt"
 
@@ -13,9 +14,9 @@ import (
 var ErrGrantVersionRevoked = errors.New("service ticket grant version revoked")
 
 type TicketVerifier struct {
-	issuer string
-	key    []byte
-	lookup GrantVersionLookup
+	issuer   string
+	resolver PublicKeyResolver
+	lookup   GrantVersionLookup
 }
 
 type GrantVersionLookup interface {
@@ -39,11 +40,20 @@ type serviceTicketJWTClaims struct {
 	UserID               uint64   `json:"user_id"`
 	PlatformServiceKey   string   `json:"platform_service_key"`
 	PlatformAccountRefID uint64   `json:"platform_account_ref_id"`
+	TicketType           string   `json:"typ"`
 	jwt.RegisteredClaims
 }
 
 func NewTicketVerifier(issuer string, key []byte) *TicketVerifier {
-	return &TicketVerifier{issuer: issuer, key: key}
+	return NewStaticKeyTicketVerifier(issuer, "default", ed25519.PublicKey(key))
+}
+
+func NewTicketVerifierWithResolver(issuer string, resolver PublicKeyResolver) *TicketVerifier {
+	return &TicketVerifier{issuer: issuer, resolver: resolver}
+}
+
+func NewStaticKeyTicketVerifier(issuer, kid string, publicKey ed25519.PublicKey) *TicketVerifier {
+	return NewTicketVerifierWithResolver(issuer, NewStaticPublicKeyResolver(kid, publicKey))
 }
 
 func (v *TicketVerifier) WithGrantVersionLookup(lookup GrantVersionLookup) *TicketVerifier {
@@ -59,11 +69,21 @@ func (v *TicketVerifier) VerifyContext(ctx context.Context, raw string, expected
 	claims := &serviceTicketJWTClaims{}
 
 	parsed, err := jwt.ParseWithClaims(raw, claims, func(token *jwt.Token) (any, error) {
-		if token.Method != jwt.SigningMethodHS256 {
+		if token.Method != jwt.SigningMethodEdDSA {
 			return nil, fmt.Errorf("unexpected signing method: %s", token.Method.Alg())
 		}
-		return v.key, nil
-	}, jwt.WithAudience(expectedAudience), jwt.WithIssuer(v.issuer))
+		kid, ok := token.Header["kid"].(string)
+		if !ok || kid == "" {
+			return nil, fmt.Errorf("service ticket missing kid")
+		}
+		if token.Header["typ"] != "service_ticket" {
+			return nil, fmt.Errorf("service ticket typ must be service_ticket")
+		}
+		if v.resolver == nil {
+			return nil, fmt.Errorf("service ticket public key resolver is not configured")
+		}
+		return v.resolver.Resolve(ctx, kid)
+	}, jwt.WithAudience(expectedAudience), jwt.WithIssuer(v.issuer), jwt.WithExpirationRequired())
 	if err != nil {
 		return nil, err
 	}

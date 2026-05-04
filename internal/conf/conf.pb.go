@@ -178,12 +178,14 @@ func (x *Data) GetRedis() *Data_Redis {
 }
 
 type Security struct {
-	state                   protoimpl.MessageState `protogen:"open.v1"`
-	CredentialEncryptionKey string                 `protobuf:"bytes,1,opt,name=credential_encryption_key,json=credentialEncryptionKey,proto3" json:"credential_encryption_key,omitempty"`
-	ServiceTicketSigningKey string                 `protobuf:"bytes,2,opt,name=service_ticket_signing_key,json=serviceTicketSigningKey,proto3" json:"service_ticket_signing_key,omitempty"`
-	ServiceTicketIssuer     string                 `protobuf:"bytes,3,opt,name=service_ticket_issuer,json=serviceTicketIssuer,proto3" json:"service_ticket_issuer,omitempty"`
-	unknownFields           protoimpl.UnknownFields
-	sizeCache               protoimpl.SizeCache
+	state                     protoimpl.MessageState `protogen:"open.v1"`
+	CredentialEncryptionKey   string                 `protobuf:"bytes,1,opt,name=credential_encryption_key,json=credentialEncryptionKey,proto3" json:"credential_encryption_key,omitempty"`
+	ServiceTicketSigningKey   string                 `protobuf:"bytes,2,opt,name=service_ticket_signing_key,json=serviceTicketSigningKey,proto3" json:"service_ticket_signing_key,omitempty"`
+	ServiceTicketIssuer       string                 `protobuf:"bytes,3,opt,name=service_ticket_issuer,json=serviceTicketIssuer,proto3" json:"service_ticket_issuer,omitempty"`
+	ServiceTicketPublicKeyPem string                 `protobuf:"bytes,4,opt,name=service_ticket_public_key_pem,json=serviceTicketPublicKeyPem,proto3" json:"service_ticket_public_key_pem,omitempty"`
+	ServiceTicketKeyId        string                 `protobuf:"bytes,5,opt,name=service_ticket_key_id,json=serviceTicketKeyId,proto3" json:"service_ticket_key_id,omitempty"`
+	unknownFields             protoimpl.UnknownFields
+	sizeCache                 protoimpl.SizeCache
 }
 
 func (x *Security) Reset() {
@@ -233,6 +235,20 @@ func (x *Security) GetServiceTicketSigningKey() string {
 func (x *Security) GetServiceTicketIssuer() string {
 	if x != nil {
 		return x.ServiceTicketIssuer
+	}
+	return ""
+}
+
+func (x *Security) GetServiceTicketPublicKeyPem() string {
+	if x != nil {
+		return x.ServiceTicketPublicKeyPem
+	}
+	return ""
+}
+
+func (x *Security) GetServiceTicketKeyId() string {
+	if x != nil {
+		return x.ServiceTicketKeyId
 	}
 	return ""
 }
@@ -442,11 +458,13 @@ const file_internal_conf_conf_proto_rawDesc = "" +
 	"\x04addr\x18\x01 \x01(\tR\x04addr\x12\x1a\n" +
 	"\bpassword\x18\x02 \x01(\tR\bpassword\x12\x0e\n" +
 	"\x02db\x18\x03 \x01(\x05R\x02db\x12\x16\n" +
-	"\x06prefix\x18\x04 \x01(\tR\x06prefix\"\xb7\x01\n" +
+	"\x06prefix\x18\x04 \x01(\tR\x06prefix\"\xac\x02\n" +
 	"\bSecurity\x12:\n" +
 	"\x19credential_encryption_key\x18\x01 \x01(\tR\x17credentialEncryptionKey\x12;\n" +
 	"\x1aservice_ticket_signing_key\x18\x02 \x01(\tR\x17serviceTicketSigningKey\x122\n" +
-	"\x15service_ticket_issuer\x18\x03 \x01(\tR\x13serviceTicketIssuerB,Z*platform-mihomo-service/internal/conf;confb\x06proto3"
+	"\x15service_ticket_issuer\x18\x03 \x01(\tR\x13serviceTicketIssuer\x12@\n" +
+	"\x1dservice_ticket_public_key_pem\x18\x04 \x01(\tR\x19serviceTicketPublicKeyPem\x121\n" +
+	"\x15service_ticket_key_id\x18\x05 \x01(\tR\x12serviceTicketKeyIdB,Z*platform-mihomo-service/internal/conf;confb\x06proto3"
 
 var (
 	file_internal_conf_conf_proto_rawDescOnce sync.Once
